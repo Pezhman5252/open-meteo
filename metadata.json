@@ -1,0 +1,8 @@
+{
+  "name": "Remix-V40",
+  "description": "سامانه هوشمند هواشناسی کوهستان‌های ایران، ویژه کوهنوردان و طبیعت‌گردان با اطلاعات دقیق ارتفاعی و داده‌های محلی.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
