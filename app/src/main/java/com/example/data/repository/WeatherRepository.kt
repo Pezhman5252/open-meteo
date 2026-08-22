@@ -23,7 +23,7 @@ class WeatherRepository(
         temperatureUnit: String = "celsius",
         timeformat: String = "iso8601",
         models: String? = null,
-        cellSelection: String = if (elevation != null && !elevation.isNaN() && elevation > 3000.0) "nearest" else "land",
+        cellSelection: String = "land",
         forecastHours: Int? = null,
         pastDays: Int = 0,
         pastHours: Int? = null,

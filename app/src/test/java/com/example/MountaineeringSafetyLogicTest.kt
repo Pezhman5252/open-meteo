@@ -70,7 +70,7 @@ class MountaineeringSafetyLogicTest {
             targetAltitude = 0.0,
             qnh = 995.0
         )
-        assertEquals(977.08, lowPressureP, 1.0)
+        assertEquals(995.0, lowPressureP, 0.1)
     }
 
     @Test

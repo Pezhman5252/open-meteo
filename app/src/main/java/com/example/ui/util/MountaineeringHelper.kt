@@ -258,20 +258,17 @@ object MountaineeringHelper {
     ): Double {
         val targetAltDouble = targetAltitude.coerceAtLeast(0.0)
 
-        // ۱. اگر فشار پایه معتبر موجود باشد، محاسبه هایپسومتریک استاندارد هوانوردی و کوهنوردی (ICAO/WMO) با تصحیح QNH
+        // ۱. اگر فشار پایه معتبر موجود باشد، محاسبه هایپسومتریک استاندارد هوانوردی و کوهنوردی (ICAO/WMO)
         if (basePressure != null && basePressure > 100.0) {
             val diff = targetAltitude - baseAltitude
-            val qnhFactor = qnh / 1013.25
-            val correctedBasePressure = basePressure * qnhFactor
-
-            if (diff == 0.0) return correctedBasePressure.coerceIn(200.0, 1100.0)
+            if (diff == 0.0) return basePressure.coerceIn(200.0, 1100.0)
 
             val tBaseK = (baseTemp + 273.15).coerceAtLeast(200.0)
             val tTarget = targetTemp ?: (baseTemp - 0.0065 * diff)
             val tTargetK = (tTarget + 273.15).coerceAtLeast(200.0)
 
-            // فرمول هایپسومتریک استاندارد هوانوردی و کوهنوردی ICAO با دمای سطح مرجع و تصحیح QNH
-            val adjusted = correctedBasePressure * (1.0 - (0.0065 * diff) / tBaseK).pow(5.25588)
+            // فرمول هایپسومتریک استاندارد هوانوردی و کوهنوردی ICAO با دمای سطح مرجع
+            val adjusted = basePressure * (1.0 - (0.0065 * diff) / tBaseK).pow(5.25588)
             return adjusted.coerceIn(200.0, 1100.0)
         }
 
@@ -324,7 +321,7 @@ object MountaineeringHelper {
         return targetAltitude + (baseTemp * 154.0)
     }
 
-    // ۱.۶ UV Index با ضریب برف و ارتفاع (WHO / WMO Standard Calculation with Multi-Layer Open-Meteo Fallbacks)
+    // ۱.۶ UV Index با ضریب برف و ارتفاع (WHO / WMO Standard Calculation based on Open-Meteo Daily UV Index)
     fun calculateResolvedUvIndex(
         current: CurrentWeather,
         hourly: HourlyData?,
@@ -346,7 +343,7 @@ object MountaineeringHelper {
         }
         if (isNight) return 0.0
 
-        // استخراج ساعت محلی (Local Hour) برای محاسبات منحنی خورشیدی
+        // ۲. استخراج ساعت محلی برای محاسبات منحنی خورشیدی
         val timeString = if (targetIdx != null && targetIdx >= 0 && hourly != null) {
             hourly.time.getOrNull(targetIdx) ?: current.time
         } else {
@@ -367,45 +364,34 @@ object MountaineeringHelper {
             if (targetIdx != null && targetIdx >= 0) (targetIdx % 24).toDouble() else 12.0
         }
 
-        // نکته مهم (مصون‌سازی آینده): 
-        // با توجه به اینکه در OpenMeteoApiService از پارامتر `timezone=auto` استفاده شده است،
-        // زمان‌های دریافتی (مانند timeString) از قبل به صورت زمان محلی (Local Time) قله هستند.
-        // بنابراین در اینجا نیازی به جمع کردن parsedLocalHour با offsetHours نیست (جلوگیری از Double-Offset).
-        // اگر در آینده معماری تغییر کند و `timezone=GMT` شود، باید offsetHours در اینجا اعمال شود.
+        // ۳. سطح ۱: استفاده از تابش موج کوتاه ساعتی (Hourly Shortwave Radiation: W/m²)
+        val swRad = if (targetIdx != null && targetIdx >= 0) hourly?.shortwaveRadiation?.getOrNull(targetIdx) else null
+        if (swRad != null && swRad > 0.0) {
+            var uv = swRad / 100.0
 
-        // ۲. اولویت اول: استفاده از shortwave_radiation ساعتی
-        if (targetIdx != null && targetIdx >= 0 && hourly?.shortwaveRadiation != null) {
-            val swRad = hourly.shortwaveRadiation.getOrNull(targetIdx)
-            if (swRad != null && swRad > 0.0) {
-                // تبدیل استاندارد WMO
-                var uv = swRad / 100.0
+            // ضریب ارتفاع اضافی نسبت به ارتفاع مرجع
+            val diffElev = (altitude - mountainAltitude).coerceAtLeast(0)
+            val altFactor = 1.0 + (diffElev / 1000.0) * 0.10
+            uv *= altFactor
 
-                // تصحیح اختلاف ارتفاع بین قله و ارتفاع انتخاب‌شده
-                val diffElev = (altitude - mountainAltitude) / 1000.0
-                if (diffElev != 0.0) {
-                    uv *= (1.0 + 0.10 * diffElev)
-                }
-
-                // ضریب برف
-                val isSnowy = snowCover || (snowfallRate ?: 0.0) > 0.0 || (current.snowDepth ?: 0.0) > 0.0
-                if (isSnowy) {
-                    uv *= 1.4
-                }
-
-                return (uv * 10.0).toLong() / 10.0
+            val isSnowy = snowCover || (snowfallRate ?: 0.0) > 0.0 || (current.snowDepth ?: 0.0) > 0.0
+            if (isSnowy) {
+                uv *= 1.4
             }
+
+            return Math.round(uv * 10.0) / 10.0
         }
 
-        // ۳. اولویت دوم: استفاده از daily.uvIndexMax + منحنی سینوسی
+        // ۴. سطح ۲: استفاده از داده استاندارد روزانه Open-Meteo: daily.uvIndexMax + منحنی تابش روزانه
         if (daily?.uvIndexMax != null && daily.uvIndexMax.isNotEmpty()) {
             val dayIndex = if (targetIdx != null && targetIdx >= 0) {
                 (targetIdx / 24).coerceIn(0, daily.uvIndexMax.lastIndex)
             } else {
                 0
             }
-            val maxDailyUv = daily.uvIndexMax.getOrNull(dayIndex) ?: 0.0
-            if (maxDailyUv > 0.0) {
-                // منحنی سینوسی
+            var uv = daily.uvIndexMax.getOrNull(dayIndex) ?: 0.0
+            if (uv > 0.0) {
+                // منحنی سینوسی متناسب با زمان روز
                 val sunriseHour = 5.5
                 val sunsetHour = 19.5
                 val progress = (parsedLocalHour - sunriseHour) / (sunsetHour - sunriseHour)
@@ -416,19 +402,19 @@ object MountaineeringHelper {
                 }
                 if (daylightFraction <= 0.0) return 0.0
 
-                var uv = maxDailyUv * daylightFraction
+                uv *= daylightFraction
 
-                // ضریب ارتفاع کامل
+                // ضریب ارتفاع (استاندارد ۸ تا ۱۰ درصد به ازای هر ۱۰۰۰ متر)
                 val targetAlt = if (altitude > 0) altitude else mountainAltitude
                 uv *= (1.0 + 0.10 * (targetAlt / 1000.0))
 
-                // ضریب برف
+                // ضریب برف (استاندارد ۳۰ تا ۴۰ درصد)
                 val isSnowy = snowCover || (snowfallRate ?: 0.0) > 0.0 || (current.snowDepth ?: 0.0) > 0.0
                 if (isSnowy) {
                     uv *= 1.4
                 }
 
-                // ضریب ابر
+                // ضریب پوشش ابر
                 val cloudCoverPct = if (targetIdx != null && targetIdx >= 0 && hourly?.cloudCover != null) {
                     hourly.cloudCover.getOrNull(targetIdx)?.toDouble() ?: 0.0
                 } else {
@@ -438,7 +424,7 @@ object MountaineeringHelper {
                     uv *= (1.0 - (cloudCoverPct / 100.0) * 0.40).coerceIn(0.4, 1.0)
                 }
 
-                return (uv * 10.0).toLong() / 10.0
+                return Math.round(uv * 10.0) / 10.0
             }
         }
 
@@ -556,7 +542,7 @@ object MountaineeringHelper {
         val sCloud = sanitizeHumidity(cloudCover) // 0..100%
         val sLightning = lightningPotential?.let { sanitizeCape(it) } ?: 0.0
 
-        val hasConvectiveInstability = sCape >= 100.0 || sLightning > 0.0 || sCloud > 60.0 || weatherCode in listOf(80, 81, 82, 95, 96, 99)
+        val hasConvectiveInstability = sCape >= 100.0 || sLightning > 0.0 || sCloud > 60.0 || weatherCode in listOf(95, 96, 99)
 
         // اگر هیچ ناپایداری جوی همرفتی وجود نداشته باشد (ابر/بارش پوششی عادی)، ریسک صاعقه صفر است
         if (!hasConvectiveInstability) {
@@ -612,7 +598,6 @@ object MountaineeringHelper {
         when (weatherCode) {
             95 -> risk = maxOf(risk, 70)
             96, 99 -> risk = maxOf(risk, 85)
-            80, 81, 82 -> risk = maxOf(risk, 35)
         }
 
         // ۶. قانون ایمنی و Fallback برای صاعقه خشک در مناطق غیر اروپایی/آسیایی:
@@ -812,8 +797,16 @@ object MountaineeringHelper {
         val windChill = calculateWindChill(temp, windSpeed, isNight)
         return if (windChill > -10.0) {
             0
+        } else if (windChill <= -48.0) {
+            100 // کمتر از ۵ دقیقه
+        } else if (windChill <= -40.0) {
+            90  // ۵ تا ۱۰ دقیقه
+        } else if (windChill <= -28.0) {
+            75  // ۱۰ تا ۳۰ دقیقه
+        } else if (windChill <= -20.0) {
+            40  // بیش از ۳۰ دقیقه
         } else {
-            minOf(100, (abs(windChill + 10.0) * 3.0).toInt())
+            minOf(30, (abs(windChill + 10.0) * 1.5).toInt())
         }
     }
 
@@ -840,9 +833,9 @@ object MountaineeringHelper {
             altitude > 3500 -> {
                 when {
                     speed < 15.0 -> 0
-                    speed < 25.0 -> (0 + ((speed - 15.0) / 10.0) * 35.0).toInt()
-                    speed < 35.0 -> (35 + ((speed - 25.0) / 10.0) * 35.0).toInt()
-                    else -> minOf(100, (70 + ((speed - 35.0) / 15.0) * 30.0).toInt())
+                    speed < 25.0 -> (0 + ((speed - 15.0) / 10.0) * 30.0).toInt()
+                    speed < 40.0 -> (30 + ((speed - 25.0) / 15.0) * 40.0).toInt()
+                    else -> minOf(100, (70 + ((speed - 40.0) / 15.0) * 30.0).toInt())
                 }
             }
             altitude > 2000 -> {
@@ -867,10 +860,10 @@ object MountaineeringHelper {
             altitude > 3500 -> {
                 when {
                     gusts < 25.0 -> 0
-                    gusts < 38.0 -> (0 + ((gusts - 25.0) / 13.0) * 35.0).toInt()
-                    gusts < 50.0 -> (35 + ((gusts - 38.0) / 12.0) * 30.0).toInt()
-                    gusts < 60.0 -> (65 + ((gusts - 50.0) / 10.0) * 20.0).toInt()
-                    else -> minOf(100, (85 + ((gusts - 60.0) / 15.0) * 15.0).toInt())
+                    gusts < 40.0 -> (0 + ((gusts - 25.0) / 15.0) * 35.0).toInt()
+                    gusts < 60.0 -> (35 + ((gusts - 40.0) / 20.0) * 35.0).toInt()
+                    gusts < 75.0 -> (70 + ((gusts - 60.0) / 15.0) * 15.0).toInt()
+                    else -> minOf(100, (85 + ((gusts - 75.0) / 15.0) * 15.0).toInt())
                 }
             }
             altitude > 2000 -> {
@@ -1176,18 +1169,11 @@ object MountaineeringHelper {
         val hourlyWind = hourly?.windSpeed10m?.filterNotNull() ?: emptyList()
         val hourlyCape = hourly?.cape?.filterNotNull() ?: emptyList()
 
-        // ======== محاسبه برف ۲۴ ساعته و عمق برف با پوشش کامل Fallback ========
+        // ======== محاسبه برف ۲۴ ساعته و عمق برف با داده استاندارد روزانه Open-Meteo ========
         val startIdx = max(0, targetIdx - 24)
         val endIdx = min(targetIdx, hourlyTemp.size)
 
-        val newSnow24h = if (hourlySnowfall.isNotEmpty()) {
-            (startIdx until endIdx).sumOf { hourlySnowfall.getOrNull(it) ?: 0.0 }
-        } else if (daily?.snowfallSum?.isNotEmpty() == true) {
-            normalizeSnowfallCm(daily.snowfallSum.firstOrNull(), snowUnit)
-        } else {
-            val hrs = (endIdx - startIdx).coerceAtLeast(1)
-            safeSnowfallCm * hrs.toDouble()
-        }
+        val newSnow24h = normalizeSnowfallCm(daily?.snowfallSum?.firstOrNull(), snowUnit)
 
         // Open-Meteo returns snow_depth in meters by default; normalize with unit check
         val currentSnowDepthUnit = units?.snowDepth ?: "m"

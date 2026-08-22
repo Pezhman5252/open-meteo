@@ -50,7 +50,7 @@ object WeatherCodeHelper {
             0 -> if (isNight) Icons.Default.NightsStay else Icons.Default.WbSunny
             1, 2 -> if (isNight) Icons.Default.CloudQueue else Icons.Default.CloudQueue
             3 -> Icons.Default.Cloud
-            45, 48 -> Icons.Default.FilterHdr
+            45, 48 -> Icons.Default.Cloud
             51, 53, 55 -> Icons.Default.WaterDrop // Drizzle
             56, 57 -> Icons.Default.AcUnit // Freezing drizzle
             61, 63 -> Icons.Default.WaterDrop

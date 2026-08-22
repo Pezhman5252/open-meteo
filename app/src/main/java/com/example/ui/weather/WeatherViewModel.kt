@@ -13,6 +13,7 @@ import com.example.data.repository.WeatherRepository
 import com.example.ui.util.PersianDateHelper
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -337,8 +338,14 @@ class WeatherViewModel(
         return capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
+    private fun getCacheFile(context: android.content.Context, mountainId: Int): File {
+        return File(context.filesDir, "cached_weather_$mountainId.json")
+    }
+
     fun hasCachedWeather(mountainId: Int): Boolean {
         val ctx = getApplication<android.app.Application>()
+        val file = getCacheFile(ctx, mountainId)
+        if (file.exists() && file.length() > 0) return true
         val prefs = getPrefs(ctx)
         val json = prefs.getString("cached_weather_json_$mountainId", null)
         return !json.isNullOrBlank()
@@ -348,8 +355,8 @@ class WeatherViewModel(
         val ctx = getApplication<android.app.Application>()
         val prefs = getPrefs(ctx)
         val cached = allMountains.value.map { it.id }.filter { id ->
-            val json = prefs.getString("cached_weather_json_$id", null)
-            !json.isNullOrBlank()
+            val file = getCacheFile(ctx, id)
+            (file.exists() && file.length() > 0) || !prefs.getString("cached_weather_json_$id", null).isNullOrBlank()
         }.toSet()
         _cachedMountainIds.value = cached
     }
@@ -696,14 +703,18 @@ class WeatherViewModel(
                     lng = mountain.longitude,
                     elevation = mountain.altitude.toDouble(),
                     forecastDays = forecastDaysToFetch,
-                    pastHours = 3,
+                    pastHours = 24,
                     temperatureUnit = "celsius",
                     windSpeedUnit = "kmh",
                     precipitationUnit = "mm",
                     timezone = "auto"
                 )
 
-                val serverTime = PersianDateHelper.getPersianDateTimeString(Date())
+                val serverTime = if (response.current?.time != null) {
+                    PersianDateHelper.formatIsoDateTimeToPersian(response.current.time)
+                } else {
+                    PersianDateHelper.getPersianDateTimeString(Date())
+                }
                 _lastUpdatedTime.value = serverTime
 
                 saveWeatherToCache(mountain.id, response, serverTime)
@@ -778,9 +789,15 @@ class WeatherViewModel(
             val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
             val adapter = moshi.adapter(WeatherResponse::class.java)
             val json = adapter.toJson(response)
+            
+            // Save JSON to internal storage file to avoid large SharedPreferences allocations (ANR prevention)
+            val file = getCacheFile(context, mountainId)
+            file.writeText(json)
+
+            // Save timestamp in prefs for fast metadata lookup and clean up any legacy SharedPreferences json
             getPrefs(context).edit().apply {
-                putString("cached_weather_json_$mountainId", json)
                 putString("cached_weather_time_$mountainId", timeStr)
+                remove("cached_weather_json_$mountainId")
                 apply()
             }
             updateCachedMountainIds()
@@ -793,8 +810,14 @@ class WeatherViewModel(
     private fun loadWeatherFromCache(mountainId: Int): Pair<WeatherResponse, String>? {
         val context = getApplication<android.app.Application>()
         val prefs = getPrefs(context)
-        val json = prefs.getString("cached_weather_json_$mountainId", null)
         val timeStr = prefs.getString("cached_weather_time_$mountainId", null)
+
+        val file = getCacheFile(context, mountainId)
+        val json = if (file.exists() && file.length() > 0) {
+            file.readText()
+        } else {
+            prefs.getString("cached_weather_json_$mountainId", null)
+        }
 
         if (json.isNullOrBlank() || timeStr.isNullOrBlank()) return null
 
@@ -823,14 +846,18 @@ class WeatherViewModel(
                     lng = mountain.longitude,
                     elevation = mountain.altitude.toDouble(),
                     forecastDays = forecastDaysToFetch,
-                    pastHours = 3,
+                    pastHours = 24,
                     temperatureUnit = "celsius",
                     windSpeedUnit = "kmh",
                     precipitationUnit = "mm",
                     timezone = "auto"
                 )
 
-                val serverTime = PersianDateHelper.getPersianDateTimeString(Date())
+                val serverTime = if (response.current?.time != null) {
+                    PersianDateHelper.formatIsoDateTimeToPersian(response.current.time)
+                } else {
+                    PersianDateHelper.getPersianDateTimeString(Date())
+                }
                 _lastUpdatedTime.value = serverTime
 
                 saveWeatherToCache(mountain.id, response, serverTime)
@@ -873,6 +900,17 @@ class WeatherViewModel(
             }
         }
         edit.apply()
+
+        try {
+            context.filesDir.listFiles()?.forEach { f ->
+                if (f.name.startsWith("cached_weather_") && f.name.endsWith(".json")) {
+                    f.delete()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("WeatherViewModel", "Failed to clear cache files: ${e.message}")
+        }
+
         updateCachedMountainIds()
 
         val currentSelected = _selectedMountain.value
@@ -887,6 +925,12 @@ class WeatherViewModel(
             remove("cached_weather_json_$mountainId")
             remove("cached_weather_time_$mountainId")
             apply()
+        }
+        try {
+            val file = getCacheFile(context, mountainId)
+            if (file.exists()) file.delete()
+        } catch (e: Exception) {
+            Log.e("WeatherViewModel", "Failed to delete cache file for mountain $mountainId: ${e.message}")
         }
         updateCachedMountainIds()
 
