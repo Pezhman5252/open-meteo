@@ -50,6 +50,7 @@ android {
     }
   }
   compileOptions {
+    isCoreLibraryDesugaringEnabled = true
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
   }
@@ -122,6 +123,7 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
   implementation(libs.poolakey)
+  coreLibraryDesugaring(libs.desugar.jdk.libs)
 }
 
 tasks.register("downloadVazirmatnFont") {

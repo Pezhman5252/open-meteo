@@ -60,9 +60,9 @@ class PremiumSubscriptionTest {
         // Stub service for WeatherRepository since we are testing VM logic and state persistence
         val stubApiService = object : OpenMeteoApiService {
             override suspend fun getForecast(
-                latitude: Double,
-                longitude: Double,
-                elevation: Double?,
+                latitude: String,
+                longitude: String,
+                elevation: String?,
                 temperatureUnit: String,
                 timeformat: String,
                 pastDays: Int,

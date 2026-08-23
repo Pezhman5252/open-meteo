@@ -697,6 +697,9 @@ class WeatherViewModel(
         }
         viewModelScope.launch {
             try {
+                // تصمیم محصول: کاربران رایگان ۳ روز پیش‌بینی و کاربران پریمیوم حداکثر ۱۶ روز (سقف مجاز Open-Meteo) دریافت می‌کنند.
+                // Open-Meteo به‌طور پیش‌فرض ۷ روز پیش‌بینی رایگان ارائه می‌دهد، اما این اپلیکیشن به‌دلیل محدودیت
+                // سرور پراکسی و پهنای باند موبایل، نسخه رایگان را به ۳ روز محدود کرده است.
                 val forecastDaysToFetch = if (_isPremium.value) 16 else 3
                 val response = weatherRepository.fetchWeatherForecast(
                     lat = mountain.latitude,
@@ -1110,10 +1113,20 @@ class WeatherViewModel(
 
     private fun parseErrorMessage(json: String): String? {
         return try {
-            val moshi = Moshi.Builder().build()
-            val adapter = moshi.adapter(Map::class.java)
+            val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+            val type = com.squareup.moshi.Types.newParameterizedType(
+                Map::class.java,
+                String::class.java,
+                Any::class.java
+            )
+            val adapter: com.squareup.moshi.JsonAdapter<Map<String, Any>> = moshi.adapter(type)
             val map = adapter.fromJson(json)
-            (map?.get("reason") ?: map?.get("error") ?: map?.get("message")) as? String
+            val raw = map?.get("reason") ?: map?.get("error") ?: map?.get("message")
+            when (raw) {
+                is String -> raw
+                is Boolean -> null
+                else -> null
+            }
         } catch (e: Exception) {
             null
         }

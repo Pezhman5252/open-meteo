@@ -92,10 +92,7 @@ data class CurrentWeather(
     @param:Json(name = "soil_temperature_0cm") val soilTemperature0cm: Double? = null,
     @param:Json(name = "cloud_cover_low") val cloudCoverLow: Double? = null,
     @param:Json(name = "cloud_cover_mid") val cloudCoverMid: Double? = null,
-    @param:Json(name = "cloud_cover_high") val cloudCoverHigh: Double? = null,
-    @param:Json(name = "geopotential_height_500hPa") val geopotentialHeight500hPa: Double? = null,
-    @param:Json(name = "geopotential_height_700hPa") val geopotentialHeight700hPa: Double? = null,
-    @param:Json(name = "geopotential_height_850hPa") val geopotentialHeight850hPa: Double? = null
+    @param:Json(name = "cloud_cover_high") val cloudCoverHigh: Double? = null
 )
 
 @JsonClass(generateAdapter = true)

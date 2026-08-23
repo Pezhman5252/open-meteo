@@ -34,22 +34,25 @@ class WeatherRepository(
     ): WeatherResponse = withContext(Dispatchers.IO) {
         require(lat in -90.0..90.0) { "Latitude must be between -90 and 90 degrees" }
         require(lng in -180.0..180.0) { "Longitude must be between -180 and 180 degrees" }
-        // طبق مستندات Open-Meteo بازه ۰ تا ۱۶ مجاز است، اما مقدار ۰ در عمل کاربردی ندارد؛ بنابراین بازه ۱ تا ۱۶ اعتبارسنجی می‌شود.
-        require(forecastDays in 1..16) { "forecast_days must be between 1 and 16" }
+        // طبق مستندات Open-Meteo، بازه مجاز forecast_days بین ۰ تا ۱۶ است (۰ برای دریافت فقط داده‌های گذشته).
+        require(forecastDays in 0..16) { "forecast_days must be between 0 and 16" }
         require(elevation == null || elevation.isNaN() || elevation in -500.0..9000.0) { 
             "Elevation must be between -500 and 9000 meters or NaN to disable downscaling" 
         }
 
-        val elevationParam = when {
-            disableDownscaling -> Double.NaN
-            elevation != null -> elevation
+        // Open-Meteo برای غیرفعال‌سازی کاهش مقیاس ارتفاعی (downscaling) دقیقاً رشته "nan" را می‌پذیرد.
+        // Double.NaN به شکل "NaN" (با حروف بزرگ) سریالایز می‌شود که API آن را به عنوان مقدار معتبر تشخیص نمی‌دهد؛
+        // بنابراین این مقدار همیشه به‌صورت رشته به سرور ارسال می‌شود.
+        val elevationParam: String? = when {
+            disableDownscaling -> "nan"
+            elevation != null -> elevation.toString()
             else -> null
         }
 
         val response = try {
             apiService.getForecast(
-                latitude = lat,
-                longitude = lng,
+                latitude = lat.toString(),
+                longitude = lng.toString(),
                 elevation = elevationParam,
                 temperatureUnit = temperatureUnit,
                 timeformat = timeformat,
@@ -71,8 +74,8 @@ class WeatherRepository(
             Log.w("WeatherRepository", "Primary proxy request failed (${primaryErr.message}). Activating seamless direct Open-Meteo failover...")
             try {
                 fallbackApiService.getForecast(
-                    latitude = lat,
-                    longitude = lng,
+                    latitude = lat.toString(),
+                    longitude = lng.toString(),
                     elevation = elevationParam,
                     temperatureUnit = temperatureUnit,
                     timeformat = timeformat,

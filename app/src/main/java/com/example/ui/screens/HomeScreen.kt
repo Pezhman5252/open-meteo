@@ -748,7 +748,11 @@ fun HomeScreen(
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Text(
-                                                    text = "مختصات: N ${PersianDateHelper.formatToPersianDigits(mount.latitude)}° / E ${PersianDateHelper.formatToPersianDigits(mount.longitude)}°",
+                                                    text = run {
+                                                        val latDir = if (mount.latitude >= 0) "N" else "S"
+                                                        val lonDir = if (mount.longitude >= 0) "E" else "W"
+                                                        "مختصات: $latDir ${PersianDateHelper.formatToPersianDigits(kotlin.math.abs(mount.latitude))}° / $lonDir ${PersianDateHelper.formatToPersianDigits(kotlin.math.abs(mount.longitude))}°"
+                                                    },
                                                     fontSize = 8.sp,
                                                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                                     color = textUltraMuted,
@@ -985,20 +989,28 @@ fun HomeScreenContent(
         val adjVisibility = current.visibility ?: fallbackVisibility
         val adjCloudCover = current.cloudCover ?: fallbackCloudCover
         
+        // تفکیک فاز بارش بر اساس دمای مرطوب (Wet-Bulb) مطابق استاندارد WMO به‌جای دمای خشک سطحی:
+        // - دمای مرطوب زیر ۱- درجه → بارش جامد (برف)
+        // - دمای مرطوب بالای ۰.۵+ درجه → بارش مایع (باران)
+        // - بازه میانی (باران یخ‌زده/بارش مخلوط) → کد وضعیت اصلی حفظ می‌شود
+        val adjWetBulb = MountaineeringHelper.wetBulbTemp(adjTemp, adjHumidity)
         var finalWeatherCode = current.weatherCode
-        if (adjTemp <= 0.0) {
-            finalWeatherCode = when (finalWeatherCode) {
-                61, 80 -> 71
-                63, 81 -> 73
-                65, 82 -> 75
-                else -> finalWeatherCode
+        when {
+            adjWetBulb < -1.0 -> {
+                finalWeatherCode = when (finalWeatherCode) {
+                    61, 80 -> 71
+                    63, 81 -> 73
+                    65, 82 -> 75
+                    else -> finalWeatherCode
+                }
             }
-        } else if (adjTemp > 2.0) {
-            finalWeatherCode = when (finalWeatherCode) {
-                71, 85 -> 61
-                73, 86 -> 63
-                75 -> 65
-                else -> finalWeatherCode
+            adjWetBulb > 0.5 -> {
+                finalWeatherCode = when (finalWeatherCode) {
+                    71, 85 -> 61
+                    73, 86 -> 63
+                    75 -> 65
+                    else -> finalWeatherCode
+                }
             }
         }
 

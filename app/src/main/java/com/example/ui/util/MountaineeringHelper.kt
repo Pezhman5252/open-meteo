@@ -491,20 +491,28 @@ object MountaineeringHelper {
         val adjVisibility = cur.visibility ?: fallbackVisibility
         val adjCloudCover = cur.cloudCover ?: fallbackCloudCover
 
+        // تفکیک فاز بارش بر اساس دمای مرطوب (Wet-Bulb) مطابق استاندارد WMO به‌جای دمای خشک سطحی:
+        // - دمای مرطوب زیر ۱- درجه → بارش جامد (برف)
+        // - دمای مرطوب بالای ۰.۵+ درجه → بارش مایع (باران)
+        // - بازه میانی (باران یخ‌زده/بارش مخلوط) → کد وضعیت اصلی حفظ می‌شود
+        val wetBulbAtStep = wetBulbTemp(tempAtStep, adjHumidity)
         var finalWeatherCode = cur.weatherCode
-        if (tempAtStep <= 0.0) {
-            finalWeatherCode = when (finalWeatherCode) {
-                61, 80 -> 71
-                63, 81 -> 73
-                65, 82 -> 75
-                else -> finalWeatherCode
+        when {
+            wetBulbAtStep < -1.0 -> {
+                finalWeatherCode = when (finalWeatherCode) {
+                    61, 80 -> 71
+                    63, 81 -> 73
+                    65, 82 -> 75
+                    else -> finalWeatherCode
+                }
             }
-        } else if (tempAtStep > 2.0) {
-            finalWeatherCode = when (finalWeatherCode) {
-                71, 85 -> 61
-                73, 86 -> 63
-                75 -> 65
-                else -> finalWeatherCode
+            wetBulbAtStep > 0.5 -> {
+                finalWeatherCode = when (finalWeatherCode) {
+                    71, 85 -> 61
+                    73, 86 -> 63
+                    75 -> 65
+                    else -> finalWeatherCode
+                }
             }
         }
 
@@ -1041,23 +1049,22 @@ object MountaineeringHelper {
 
         // ۱. تلاش برای همگام‌سازی مستقیم با زمان واقعی سیستم و آفست منطقه زمانی کوهستان برای شیفت اتوماتیک
         try {
-            val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
             val calculatedOffset = if (lat != null && lon != null) {
                 AstronomicalCalculator.getStandardTimezoneOffset(mountainName ?: "", lat, lon)
             } else {
                 3.5
             }
             val finalOffset = offsetHours ?: calculatedOffset
-            val nowLocalMs = cal.timeInMillis + (finalOffset * 3600.0 * 1000.0).toLong()
-            val localCal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
-                timeInMillis = nowLocalMs
-            }
-            val curYear = localCal.get(java.util.Calendar.YEAR)
-            val curMonth = localCal.get(java.util.Calendar.MONTH) + 1
-            val curDay = localCal.get(java.util.Calendar.DAY_OF_MONTH)
-            val curHour = localCal.get(java.util.Calendar.HOUR_OF_DAY)
-            
-            val targetPrefix = String.format("%04d-%02d-%02dT%02d", curYear, curMonth, curDay, curHour)
+            // زمان فعلی در UTC و اعمال آفست منطقه زمانی قله (از جمله آفست‌های کسری مانند ۳.۵+ ایران) با java.time
+            val utcNow = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
+            val peakLocalTime = utcNow.plusSeconds((finalOffset * 3600.0).toLong())
+            val targetPrefix = String.format(
+                "%04d-%02d-%02dT%02d",
+                peakLocalTime.year,
+                peakLocalTime.monthValue,
+                peakLocalTime.dayOfMonth,
+                peakLocalTime.hour
+            )
             val realIdx = hourly.time.indexOfFirst { it.startsWith(targetPrefix) }
             if (realIdx != -1) return realIdx
         } catch (e: Exception) {
@@ -1083,12 +1090,8 @@ object MountaineeringHelper {
             // Fallback به ساعت قله با استفاده از offset
             try {
                 val finalOffset = offsetHours ?: 3.5
-                val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
-                val nowLocalMs = cal.timeInMillis + (finalOffset * 3600.0 * 1000.0).toLong()
-                val localCal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
-                    timeInMillis = nowLocalMs
-                }
-                localCal.get(java.util.Calendar.HOUR_OF_DAY)
+                val utcNow = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
+                utcNow.plusSeconds((finalOffset * 3600.0).toLong()).hour
             } catch (e2: Exception) {
                 12
             }
@@ -1155,7 +1158,9 @@ object MountaineeringHelper {
         val windSpeed80m = safeWind80m
         val apparentTemp = safeApparentTempC
         val weatherCode = current.weatherCode
-        val relativeHumidity = current.relativeHumidity2m ?: 60.0
+        // رطوبت نسبی ممکن است در برخی مدل‌ها/موقعیت‌ها وجود نداشته باشد؛ مقدار null عمداً حفظ می‌شود تا
+        // به‌جای نمایش عدد جعلی، در هر مصرف‌کننده به‌صورت صریح با فرض استاندارد محاسبه شود.
+        val relativeHumidity = current.relativeHumidity2m
         val qnhValCurrent = current.pressureMsl ?: 1013.25
         val surfacePressure = current.surfacePressure ?: calculateBarometricPressure(null, safeTempC, altitude.toDouble(), altitude.toDouble(), qnh = qnhValCurrent)
         val freezingLevelHeight = minutely15?.freezingLevelHeight?.firstOrNull()
@@ -1439,7 +1444,7 @@ object MountaineeringHelper {
         var synergyPenalty = 0
 
         val isColdWindPrecipRed = curTemp < 1.0 && safeWind80m > 30.0 && (rawPrecip > 0.4 || effectiveSnowfall > 0.2)
-        val isColdWindPrecipYellow = curTemp < 3.0 && safeWind80m > 22.0 && (rawPrecip > 0.1 || effectiveSnowfall > 0.05 || relativeHumidity > 80.0)
+        val isColdWindPrecipYellow = curTemp < 3.0 && safeWind80m > 22.0 && (rawPrecip > 0.1 || effectiveSnowfall > 0.05 || (relativeHumidity ?: 0.0) > 80.0)
 
         if (isColdWindPrecipRed) synergyPenalty += 35
         else if (isColdWindPrecipYellow) synergyPenalty += 20
@@ -1492,7 +1497,7 @@ object MountaineeringHelper {
         val soilTemp = safeSoilTempC ?: hourly?.soilTemperature0cm?.getOrNull(targetIdx)?.let { normalizeTemperature(it, tempUnit) }
         val isVerglasRed = soilTemp != null && soilTemp <= 0.0 && safePrecipMm >= 2.0
         val isVerglasYellow = soilTemp != null && soilTemp <= 0.0 && safePrecipMm > 0.0
-        val isGroundFreezeYellow = soilTemp != null && soilTemp <= 0.0 && safePrecipMm == 0.0 && relativeHumidity >= 70.0
+        val isGroundFreezeYellow = soilTemp != null && soilTemp <= 0.0 && safePrecipMm == 0.0 && (relativeHumidity ?: 0.0) >= 70.0
 
         val forcedRed = safeWind80m > windRedThresh ||
                 apparentTemp < -18.0 ||
@@ -2355,7 +2360,7 @@ object MountaineeringHelper {
     // ============================================================
 
     // دمای مرطوب (Wet Bulb) به فرمول Stull با اعتبارسنجی ورودی‌ها
-    fun wetBulbTemp(tempC: Double, humidityPct: Double): Double {
+    fun wetBulbTemp(tempC: Double, humidityPct: Double?): Double {
         val sTemp = sanitizeTemperature(tempC)
         val sHum = sanitizeHumidity(humidityPct).coerceIn(0.0, 100.0)
         val tw = sTemp * atan(0.151977 * sqrt(sHum + 8.313659)) +
