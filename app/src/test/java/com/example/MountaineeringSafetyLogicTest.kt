@@ -188,13 +188,21 @@ class MountaineeringSafetyLogicTest {
 
     @Test
     fun testCalculateWindRisk_high_altitude_thresholds() {
-        // Wind speed 40km/h at 3800m altitude (high altitude sensitivity)
-        val highAltWindRisk = MountaineeringHelper.calculateWindRisk(
-            windSpeed = 40.0,
-            windGusts = 60.0,
+        // Normal wind speed 25 km/h at 3800m altitude should produce 0% risk (no false alarm)
+        val normalWindRisk = MountaineeringHelper.calculateWindRisk(
+            windSpeed = 25.0,
+            windGusts = 35.0,
             altitude = 3800
         )
-        assertTrue("High altitude wind risk at 3800m should be >= 70%", highAltWindRisk >= 70)
+        assertEquals("Normal wind speed < 40 km/h at 3800m should produce 0% false alarm risk", 0, normalWindRisk)
+
+        // Dangerous wind speed 60 km/h and gusts 80 km/h at 3800m should produce severe risk (>= 70%)
+        val dangerousWindRisk = MountaineeringHelper.calculateWindRisk(
+            windSpeed = 60.0,
+            windGusts = 80.0,
+            altitude = 3800
+        )
+        assertTrue("Dangerous storm wind speed at 3800m should be >= 70%", dangerousWindRisk >= 70)
     }
 
     @Test

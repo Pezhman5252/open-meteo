@@ -364,25 +364,7 @@ object MountaineeringHelper {
             if (targetIdx != null && targetIdx >= 0) (targetIdx % 24).toDouble() else 12.0
         }
 
-        // ۳. سطح ۱: استفاده از تابش موج کوتاه ساعتی (Hourly Shortwave Radiation: W/m²)
-        val swRad = if (targetIdx != null && targetIdx >= 0) hourly?.shortwaveRadiation?.getOrNull(targetIdx) else null
-        if (swRad != null && swRad > 0.0) {
-            var uv = swRad / 100.0
-
-            // ضریب ارتفاع اضافی نسبت به ارتفاع مرجع
-            val diffElev = (altitude - mountainAltitude).coerceAtLeast(0)
-            val altFactor = 1.0 + (diffElev / 1000.0) * 0.10
-            uv *= altFactor
-
-            val isSnowy = snowCover || (snowfallRate ?: 0.0) > 0.0 || (current.snowDepth ?: 0.0) > 0.0
-            if (isSnowy) {
-                uv *= 1.4
-            }
-
-            return Math.round(uv * 10.0) / 10.0
-        }
-
-        // ۴. سطح ۲: استفاده از داده استاندارد روزانه Open-Meteo: daily.uvIndexMax + منحنی تابش روزانه
+        // ۳. سطح ۱ (اولویت اول و اصلی): استفاده از داده رسمی و استاندارد Open-Meteo (daily.uvIndexMax) + منحنی تابش روزانه
         if (daily?.uvIndexMax != null && daily.uvIndexMax.isNotEmpty()) {
             val dayIndex = if (targetIdx != null && targetIdx >= 0) {
                 (targetIdx / 24).coerceIn(0, daily.uvIndexMax.lastIndex)
@@ -408,13 +390,13 @@ object MountaineeringHelper {
                 val targetAlt = if (altitude > 0) altitude else mountainAltitude
                 uv *= (1.0 + 0.10 * (targetAlt / 1000.0))
 
-                // ضریب برف (استاندارد ۳۰ تا ۴۰ درصد)
+                // ضریب بازتاب برف (استاندارد ۳۰ تا ۴۰ درصد)
                 val isSnowy = snowCover || (snowfallRate ?: 0.0) > 0.0 || (current.snowDepth ?: 0.0) > 0.0
                 if (isSnowy) {
                     uv *= 1.4
                 }
 
-                // ضریب پوشش ابر
+                // ضریب تضعیف ابر
                 val cloudCoverPct = if (targetIdx != null && targetIdx >= 0 && hourly?.cloudCover != null) {
                     hourly.cloudCover.getOrNull(targetIdx)?.toDouble() ?: 0.0
                 } else {
@@ -426,6 +408,24 @@ object MountaineeringHelper {
 
                 return Math.round(uv * 10.0) / 10.0
             }
+        }
+
+        // ۴. سطح ۲ (Fallback): استفاده از تابش موج کوتاه ساعتی در صورت عدم دسترسی به داده روزانه (W/m²)
+        val swRad = if (targetIdx != null && targetIdx >= 0) hourly?.shortwaveRadiation?.getOrNull(targetIdx) else null
+        if (swRad != null && swRad > 0.0) {
+            var uv = swRad / 100.0
+
+            // ضریب ارتفاع اضافی نسبت به ارتفاع مرجع
+            val diffElev = (altitude - mountainAltitude).coerceAtLeast(0)
+            val altFactor = 1.0 + (diffElev / 1000.0) * 0.10
+            uv *= altFactor
+
+            val isSnowy = snowCover || (snowfallRate ?: 0.0) > 0.0 || (current.snowDepth ?: 0.0) > 0.0
+            if (isSnowy) {
+                uv *= 1.4
+            }
+
+            return Math.round(uv * 10.0) / 10.0
         }
 
         return 0.0
@@ -832,10 +832,10 @@ object MountaineeringHelper {
         val speedRisk = when {
             altitude > 3500 -> {
                 when {
-                    speed < 15.0 -> 0
-                    speed < 25.0 -> (0 + ((speed - 15.0) / 10.0) * 30.0).toInt()
-                    speed < 40.0 -> (30 + ((speed - 25.0) / 15.0) * 40.0).toInt()
-                    else -> minOf(100, (70 + ((speed - 40.0) / 15.0) * 30.0).toInt())
+                    speed < 40.0 -> 0
+                    speed < 50.0 -> (0 + ((speed - 40.0) / 10.0) * 35.0).toInt()
+                    speed < 65.0 -> (35 + ((speed - 50.0) / 15.0) * 35.0).toInt()
+                    else -> minOf(100, (70 + ((speed - 65.0) / 15.0) * 30.0).toInt())
                 }
             }
             altitude > 2000 -> {
@@ -859,11 +859,11 @@ object MountaineeringHelper {
         val gustRisk = when {
             altitude > 3500 -> {
                 when {
-                    gusts < 25.0 -> 0
-                    gusts < 40.0 -> (0 + ((gusts - 25.0) / 15.0) * 35.0).toInt()
-                    gusts < 60.0 -> (35 + ((gusts - 40.0) / 20.0) * 35.0).toInt()
-                    gusts < 75.0 -> (70 + ((gusts - 60.0) / 15.0) * 15.0).toInt()
-                    else -> minOf(100, (85 + ((gusts - 75.0) / 15.0) * 15.0).toInt())
+                    gusts < 45.0 -> 0
+                    gusts < 60.0 -> (0 + ((gusts - 45.0) / 15.0) * 35.0).toInt()
+                    gusts < 75.0 -> (35 + ((gusts - 60.0) / 15.0) * 30.0).toInt()
+                    gusts < 90.0 -> (65 + ((gusts - 75.0) / 15.0) * 20.0).toInt()
+                    else -> minOf(100, (85 + ((gusts - 90.0) / 15.0) * 15.0).toInt())
                 }
             }
             altitude > 2000 -> {

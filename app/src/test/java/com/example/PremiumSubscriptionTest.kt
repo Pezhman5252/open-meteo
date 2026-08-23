@@ -146,14 +146,13 @@ class PremiumSubscriptionTest {
     }
 
     @Test
-    fun testInitSyncStates_restoresPremiumStateFromPreferences() = runBlocking {
+    fun testInitBlock_migratesOldPremiumStateToDataStore() = runBlocking {
         // Arrange: manually insert true to SharedPreferences
         val prefs = context.getSharedPreferences("mountain_sync_prefs", Context.MODE_PRIVATE)
         prefs.edit().putBoolean("is_premium", true).commit()
         
-        // Create a fresh ViewModel
+        // Create a fresh ViewModel which migrates old preference to DataStore in init
         val freshViewModel = WeatherViewModel(context as android.app.Application, mountainRepository, weatherRepository)
-        freshViewModel.initSyncStates(context)
         
         // Let initialization collection run
         delay(300)
