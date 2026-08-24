@@ -12,7 +12,6 @@ import ir.cafebazaar.poolakey.config.SecurityCheck
 import ir.cafebazaar.poolakey.entity.PurchaseInfo
 import ir.cafebazaar.poolakey.request.PurchaseRequest
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.UUID
@@ -20,7 +19,7 @@ import java.util.UUID
 /**
  * Manager for integrating with Cafe Bazaar Billing Service (Poolakey SDK).
  * Handles initialization, connection, subscription purchases, querying active subscriptions,
- * and server-side validation to prevent replay attacks.
+ * and local purchase-integrity checks (payload freshness + replay protection).
  */
 object BazaarBillingManager {
     private const val TAG = "BazaarBilling"
@@ -41,8 +40,8 @@ object BazaarBillingManager {
     private var paymentInstance: Payment? = null
     private var paymentConnection: Connection? = null
 
-    // In-memory list to track processed secure nonces and prevent replay attacks
-    private val processedNonces = mutableSetOf<String>()
+    // Lock guarding the persisted nonce set used for replay-attack prevention
+    private val processedNoncesLock = Any()
 
     /**
      * Initializes the Poolakey SDK with offline local security check using RSA Public Key.
@@ -123,17 +122,22 @@ object BazaarBillingManager {
     }
 
     /**
-     * Performs server-side validation (simulated) to verify the purchase integrity.
-     * Checks payload format, freshness (timestamp within 10 minutes), and prevents replay
-     * attacks by ensuring the nonce has not been used before.
+     * Performs a LOCAL purchase integrity check (no external server is contacted).
      *
+     * Checks payload format, freshness (timestamp within 10 minutes), and prevents replay
+     * attacks by ensuring the nonce has not been consumed before. Processed nonces are
+     * persisted to SharedPreferences so replay protection survives app restarts.
+     *
+     * Note: The RSA purchase signature is verified locally by the Poolakey
+     * [SecurityCheck.Enable] configuration at purchase time. This function performs the
+     * additional client-side integrity checks documented above; it is NOT a server
+     * verification and must not be presented to users as such.
+     *
+     * @param context The application context used for durable nonce storage.
      * @param purchase The PurchaseInfo received from Bazaar.
      * @return A ServerValidationResult indicating success or failure with a reason.
      */
-    suspend fun verifyPurchaseOnServer(purchase: PurchaseInfo): ServerValidationResult = withContext(Dispatchers.IO) {
-        // Simulate network delay for server communication
-        delay(1500)
-
+    suspend fun verifyPurchaseOnServer(context: Context, purchase: PurchaseInfo): ServerValidationResult = withContext(Dispatchers.IO) {
         val payload = purchase.payload
         if (payload.isBlank()) {
             return@withContext ServerValidationResult.Failed("خطای امنیتی: کد ارسالی (Payload) خالی است.")
@@ -157,17 +161,21 @@ object BazaarBillingManager {
             return@withContext ServerValidationResult.Failed("تراکنش منقضی شده است. زمان معتبر پرداخت به پایان رسیده.")
         }
 
-        // 2. Replay Prevention Check: Ensure this unique nonce has never been processed before
-        synchronized(processedNonces) {
-            if (processedNonces.contains(nonce)) {
+        // 2. Replay Prevention: nonces are persisted to SharedPreferences (in-memory-only sets
+        //    are wiped on app restart and would not prevent cross-session replay attacks).
+        val prefs = context.applicationContext.getSharedPreferences(
+            "billing_processed_nonces",
+            Context.MODE_PRIVATE
+        )
+        synchronized(processedNoncesLock) {
+            if (prefs.getBoolean(nonce, false)) {
                 return@withContext ServerValidationResult.Failed("تلاش مجدد غیرمجاز (Replay Attack) شناسایی شد! این تراکنش قبلاً مصرف شده است.")
             }
-            processedNonces.add(nonce)
+            prefs.edit().putBoolean(nonce, true).commit()
         }
 
         // 3. Local RSA signature verification is already enforced by SecurityCheck.Enable!
-        // Simulate successful cloud server approval.
-        Log.d(TAG, "Server validation successful! User: $userId, Nonce: $nonce, Token: ${purchase.purchaseToken}")
+        Log.d(TAG, "Local purchase verification successful! User: $userId, Nonce: $nonce, Token: ${purchase.purchaseToken}")
         return@withContext ServerValidationResult.Success(userId = userId, token = purchase.purchaseToken)
     }
 

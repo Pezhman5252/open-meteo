@@ -42,9 +42,9 @@ class WeatherRepository(
 
         // Open-Meteo برای غیرفعال‌سازی کاهش مقیاس ارتفاعی (downscaling) دقیقاً رشته "nan" را می‌پذیرد.
         // Double.NaN به شکل "NaN" (با حروف بزرگ) سریالایز می‌شود که API آن را به عنوان مقدار معتبر تشخیص نمی‌دهد؛
-        // بنابراین این مقدار همیشه به‌صورت رشته به سرور ارسال می‌شود.
+        // بنابراین هر بار که downscaling غیرفعال است یا مقدار NaN ارسال می‌شود، مقدار "nan" به‌صورت رشته ارسال می‌گردد.
         val elevationParam: String? = when {
-            disableDownscaling -> "nan"
+            disableDownscaling || elevation?.isNaN() == true -> "nan"
             elevation != null -> elevation.toString()
             else -> null
         }

@@ -113,7 +113,7 @@ class MountainRepository(private val mountainDao: MountainDao) {
                 MountainEntity(name = "Alvares", persianName = "آلوارس", province = "اردبیل", persianProvince = "اردبیل", range = "توده سبلان", latitude = 38.2045, longitude = 47.9351, altitude = 3050, type = "ski_resort"),
                 MountainEntity(name = "Fereydunshahr", persianName = "فریدون‌شهر", province = "اصفهان", persianProvince = "اصفهان", range = "زاگرس مرکزی", latitude = 32.9312, longitude = 50.0415, altitude = 2630, type = "ski_resort"),
                 MountainEntity(name = "Sahand", persianName = "سهند", province = "آذربایجان شرقی", persianProvince = "آذربایجان شرقی", range = "توده سهند", latitude = 37.7495, longitude = 46.5162, altitude = 2915, type = "ski_resort"),
-                MountainEntity(name = "Shirbad", persianName = "شیرباد", province = "خراسان رضوی", persianProvince = "خراسان رضوی", range = "بینالود", latitude = 36.3045, longitude = 59.0512, altitude = 3000, type = "ski_resort"),
+                MountainEntity(name = "Shirbad Ski Resort", persianName = "شیرباد", province = "خراسان رضوی", persianProvince = "خراسان رضوی", range = "بینالود", latitude = 36.3045, longitude = 59.0512, altitude = 3000, type = "ski_resort"),
                 MountainEntity(name = "Chelgerd (Kuhrang)", persianName = "چلگرد (کوهرنگ)", province = "چهارمحال و بختیاری", persianProvince = "چهارمحال و بختیاری", range = "زاگرس مرکزی", latitude = 32.4772, longitude = 50.1135, altitude = 2350, type = "ski_resort"),
                 MountainEntity(name = "Khoshako", persianName = "خوشاکو", province = "آذربایجان غربی", persianProvince = "آذربایجان غربی", range = "مرزی زاگرس", latitude = 37.4912, longitude = 44.6851, altitude = 2000, type = "ski_resort"),
                 MountainEntity(name = "Kakan (Dena)", persianName = "کاکان (دنا)", province = "کهگیلویه و بویراحمد", persianProvince = "کهگیلویه و بویراحمد", range = "زاگرس جنوبی", latitude = 30.6842, longitude = 51.7215, altitude = 2640, type = "ski_resort"),
@@ -259,7 +259,6 @@ data class MountainSyncResponse(
 )
 
 data class MountainSyncItem(
-    val id: Int,
     val name: String, // Contains Persian Name e.g. "دماوند"
     @param:Json(name = "english_name") val englishName: String, // Contains English Name e.g. "Damavand"
     @param:Json(name = "altitude_meters") val altitudeMeters: Int, // Altitude meters

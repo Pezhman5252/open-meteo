@@ -322,6 +322,20 @@ object MountaineeringHelper {
     }
 
     // ۱.۶ UV Index با ضریب برف و ارتفاع (WHO / WMO Standard Calculation based on Open-Meteo Daily UV Index)
+
+    /**
+     * Extracts the hour-of-day (0..23) from an Open-Meteo ISO-8601 timestamp string
+     * such as "2026-08-15T05:12". Returns null when the string cannot be parsed.
+     */
+    private fun parseHourOfDay(timeString: String): Double? {
+        return try {
+            val hour = timeString.substringAfter("T").substringBefore(":").toDoubleOrNull() ?: return null
+            hour.coerceIn(0.0, 23.0)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun calculateResolvedUvIndex(
         current: CurrentWeather,
         hourly: HourlyData?,
@@ -373,9 +387,14 @@ object MountaineeringHelper {
             }
             var uv = daily.uvIndexMax.getOrNull(dayIndex) ?: 0.0
             if (uv > 0.0) {
-                // منحنی سینوسی متناسب با زمان روز
-                val sunriseHour = 5.5
-                val sunsetHour = 19.5
+                // منحنی سینوسی متناسب با زمان روز؛ در صورت موجود بودن، طلوع و غروب واقعی خورشید از داده
+                // روزانه Open-Meteo (daily.sunrise/daily.sunset) استفاده می‌شود تا برای عرض‌های جغرافیایی
+                // بالا (مانند قطب‌ها) و فصل‌های مختلف دقیق بماند. در غیر این صورت، بازه پیش‌فرض ۰۵:۳۰ تا ۱۹:۳۰ به کار می‌رود.
+                val daySunriseHour = daily?.sunrise?.getOrNull(dayIndex)?.let { parseHourOfDay(it) }
+                val daySunsetHour = daily?.sunset?.getOrNull(dayIndex)?.let { parseHourOfDay(it) }
+                val hasValidDaylightWindow = daySunriseHour != null && daySunsetHour != null && daySunsetHour > daySunriseHour
+                val sunriseHour = if (hasValidDaylightWindow) daySunriseHour!! else 5.5
+                val sunsetHour = if (hasValidDaylightWindow) daySunsetHour!! else 19.5
                 val progress = (parsedLocalHour - sunriseHour) / (sunsetHour - sunriseHour)
                 val daylightFraction = if (progress in 0.0..1.0) {
                     kotlin.math.sin(progress * Math.PI).coerceIn(0.0, 1.0)

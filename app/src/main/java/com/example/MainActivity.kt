@@ -125,10 +125,10 @@ class MainActivity : ComponentActivity() {
                                         viewModel.setPremium(context, true)
                                         android.util.Log.d("MainActivity", "Successfully restored active gold subscription from Cafe Bazaar.")
                                     } else {
-                                        // Only set premium to false if no activation code is currently active
-                                        if (viewModel.activationCode.value.isBlank()) {
-                                            viewModel.setPremium(context, false)
-                                        }
+                                        // Only deactivate premium if no activation code is actually persisted.
+                                        // Read from DataStore (not the in-memory StateFlow) to avoid a cold-start
+                                        // race that could wipe a valid activation code.
+                                        viewModel.deactivatePremiumIfNoActivation()
                                     }
                                     BazaarBillingManager.disconnect()
                                 },

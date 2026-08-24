@@ -1850,18 +1850,23 @@ fun MountainHeroCard(
     val baseGusts10m = current?.windGusts10m ?: (baseWind10m * MountaineeringHelper.calculateDynamicGustFactor(current?.cape))
 
     // 4. Nowcast vs Forecast Badge (Validation of observational timestamp vs current time)
+    // current.time is in the PEAK'S LOCAL time (timezone=auto). Convert it to a UTC instant using
+    // the response's utc_offset_seconds before comparing with the device's UTC wall clock.
     val isNowcastLive = remember(weather.current?.time, lastUpdatedTime, tick) {
         val curTimeStr = weather.current?.time
         if (curTimeStr.isNullOrEmpty()) {
             true
         } else {
-            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm", java.util.Locale.US)
-            sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
-            val weatherDate = try { sdf.parse(curTimeStr) } catch (e: Exception) { null }
-            if (weatherDate != null) {
-                val diffMinutes = Math.abs(System.currentTimeMillis() - weatherDate.time) / (1000 * 60)
+            try {
+                val localDateTime = java.time.LocalDateTime.parse(
+                    curTimeStr,
+                    java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME
+                )
+                val utcOffset = java.time.ZoneOffset.ofTotalSeconds(weather.utcOffsetSeconds ?: 0)
+                val instant = localDateTime.toInstant(utcOffset)
+                val diffMinutes = Math.abs(System.currentTimeMillis() - instant.toEpochMilli()) / (1000 * 60)
                 diffMinutes <= 35
-            } else {
+            } catch (e: Exception) {
                 true
             }
         }

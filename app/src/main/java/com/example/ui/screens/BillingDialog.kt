@@ -234,7 +234,7 @@ fun BillingDialog(
                                                 onSucceed = { purchaseInfo ->
                                                     viewModel.viewModelScope.launch {
                                                         currentStep = BillingStep.ConnectingBazaar
-                                                        val result = BazaarBillingManager.verifyPurchaseOnServer(purchaseInfo)
+                                                        val result = BazaarBillingManager.verifyPurchaseOnServer(context, purchaseInfo)
                                                         when (result) {
                                                             is BazaarBillingManager.ServerValidationResult.Success -> {
                                                                 viewModel.setPremium(context, true)

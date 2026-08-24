@@ -314,6 +314,24 @@ class WeatherViewModel(
         }
     }
 
+    /**
+     * Deactivates premium ONLY when no activation code is persisted.
+     *
+     * Unlike reading [activationCode] (an in-memory StateFlow that is populated
+     * asynchronously from DataStore on cold start), this reads the authoritative
+     * persisted value. This prevents a startup race (e.g. a Cafe Bazaar restore
+     * callback running before the DataStore collector emits) from wiping a valid
+     * user activation code via [clearActivationDetails].
+     */
+    fun deactivatePremiumIfNoActivation() {
+        viewModelScope.launch {
+            val hasPersistedActivation = settingsDataStore.activationCode.first().isNotBlank()
+            if (!hasPersistedActivation) {
+                setPremium(getApplication(), false)
+            }
+        }
+    }
+
     fun triggerBilling(show: Boolean) {
         _showBillingDialog.value = show
     }
@@ -669,16 +687,20 @@ class WeatherViewModel(
 
     fun selectMountain(mountain: MountainEntity) {
         val context = getApplication<android.app.Application>()
+        _selectedMountain.value = mountain
+        _selectedAltitude.value = mountain.altitude
+        getPrefs(context).edit().putInt("last_selected_mountain_id", mountain.id).apply()
+
         if (!isNetworkAvailable(context) && !hasCachedWeather(mountain.id)) {
             _offlineErrorEvent.value = mountain
+            _weatherUiState.value = WeatherUiState.Error(
+                message = "اتصال به اینترنت برقرار نیست و پیش‌بینی آفلاین این قله ذخیره نشده است.",
+                errorType = WeatherErrorType.NO_INTERNET
+            )
             return
         }
 
-        _selectedMountain.value = mountain
-        _selectedAltitude.value = mountain.altitude
         fetchWeather(mountain)
-
-        getPrefs(context).edit().putInt("last_selected_mountain_id", mountain.id).apply()
     }
 
     fun setSelectedAltitude(altitude: Int) {
