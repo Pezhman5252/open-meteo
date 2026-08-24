@@ -935,14 +935,14 @@ fun HomeScreenContent(
             referenceWind = peakWind80m,
             referenceElevation = mountain.altitude.toDouble(),
             targetAltitude = activeAltitude.toDouble(),
-            alpha = 0.15
+            alpha = null
         )
 
         val adjWind10m = MountaineeringHelper.adjustWindWithAltitude(
             referenceWind = baseWind10m,
             referenceElevation = mountain.altitude.toDouble(),
             targetAltitude = activeAltitude.toDouble(),
-            alpha = 0.15
+            alpha = null
         )
 
         // Apparent Temperature: تصحیح بر اساس دمای جدید و باد جدید
@@ -977,7 +977,7 @@ fun HomeScreenContent(
             referenceWind = baseWindGusts,
             referenceElevation = mountain.altitude.toDouble(),
             targetAltitude = activeAltitude.toDouble(),
-            alpha = 0.15
+            alpha = null
         )
 
         // Visibility & Cloud Cover fallbacks
@@ -1158,7 +1158,8 @@ fun HomeScreenContent(
                             altitude = activeAltitude,
                             daily = weather.daily,
                             hourly = weather.hourly,
-                            mountain = mountain
+                            mountain = mountain,
+                            apiUtcOffsetSeconds = weather.utcOffsetSeconds
                         )
                     }
                 }
@@ -1274,7 +1275,7 @@ fun findGoldenWindows(
             referenceWind = rawWind80,
             referenceElevation = mountain.altitude.toDouble(),
             targetAltitude = altitude.toDouble(),
-            alpha = 0.15
+            alpha = null
         )
         val isNight = hourly.isDay?.getOrNull(i) == 0
         val windChill = MountaineeringHelper.calculateWindChill(adjTemp, adjWind, isNight = isNight)
@@ -1827,9 +1828,15 @@ fun MountainHeroCard(
             tick++
         }
     }
-    val peakLocalTimeText = remember(mountain, tick) {
+    val peakLocalTimeText = remember(mountain, tick, weather.utcOffsetSeconds) {
         try {
-            val peakOffsetHours = com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+            // Prefer the DST-aware offset from the Open-Meteo API response; fall back to standard-time estimate.
+            val peakOffsetHours = com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+                apiUtcOffsetSeconds = weather.utcOffsetSeconds,
+                name = mountain.name,
+                latitude = mountain.latitude,
+                longitude = mountain.longitude
+            )
             val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
             val currentUTC = cal.get(java.util.Calendar.HOUR_OF_DAY) + cal.get(java.util.Calendar.MINUTE) / 60.0
             val localHour = (currentUTC + peakOffsetHours + 24.0) % 24.0
@@ -1901,7 +1908,7 @@ fun MountainHeroCard(
             referenceWind = peakWind80m,
             referenceElevation = mountain.altitude.toDouble(),
             targetAltitude = activeAltitude.toDouble(),
-            alpha = 0.15
+            alpha = null
         )
         maxOf(calculatedWind, baseWind10m)
     }
@@ -1911,7 +1918,7 @@ fun MountainHeroCard(
             referenceWind = baseGusts10m,
             referenceElevation = mountain.altitude.toDouble(),
             targetAltitude = activeAltitude.toDouble(),
-            alpha = 0.15
+            alpha = null
         )
         maxOf(calculatedGusts, baseGusts10m)
     }
@@ -2784,7 +2791,7 @@ fun MountainHeroCard(
                             referenceWind = peakWind80m,
                             referenceElevation = mountain.altitude.toDouble(),
                             targetAltitude = step.toDouble(),
-                            alpha = 0.15
+                            alpha = null
                         )
 
                         val cur = weather.current
@@ -3569,7 +3576,7 @@ fun ClimbingSafetyCard(
                     referenceWind = if (isCurrentHour) current.windSpeed80m ?: current.windSpeed10m ?: 0.0 else rawWindSp,
                     referenceElevation = mountain.altitude.toDouble(),
                     targetAltitude = altitude.toDouble(),
-                    alpha = 0.15
+                    alpha = null
                 )
                 
                 val rawGusts = if (isCurrentHour) current.windGusts10m ?: 0.0 else hourly.windGusts10m?.getOrNull(i) ?: (rawWindSp * MountaineeringHelper.calculateDynamicGustFactor(hourly.cape?.getOrNull(i)))
@@ -3577,7 +3584,7 @@ fun ClimbingSafetyCard(
                     referenceWind = rawGusts,
                     referenceElevation = mountain.altitude.toDouble(),
                     targetAltitude = altitude.toDouble(),
-                    alpha = 0.15
+                    alpha = null
                 )
                 
                 val basePress = if (isCurrentHour) current.surfacePressure else hourly.surfacePressure?.getOrNull(i)
@@ -7634,12 +7641,19 @@ fun MountaineeringStatsSection(
     altitude: Int,
     daily: com.example.data.remote.DailyData?,
     hourly: com.example.data.remote.HourlyData?,
-    mountain: com.example.data.local.MountainEntity
+    mountain: com.example.data.local.MountainEntity,
+    apiUtcOffsetSeconds: Int? = null
 ) {
     val isDark = MaterialTheme.colorScheme.background.isDark
 
-    // Central astronomical calculations based on selected peak's coordinates, elevation and calculated peak local offset
-    val peakOffsetHours = com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+    // Central astronomical calculations based on selected peak's coordinates, elevation and calculated peak local offset.
+    // Prefer the DST-aware offset from the Open-Meteo API response; fall back to the standard-time estimate.
+    val peakOffsetHours = com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+        apiUtcOffsetSeconds = apiUtcOffsetSeconds,
+        name = mountain.name,
+        latitude = mountain.latitude,
+        longitude = mountain.longitude
+    )
     
     var statsTick by remember { mutableStateOf(System.currentTimeMillis() / 60000L) }
     LaunchedEffect(Unit) {
@@ -7656,9 +7670,14 @@ fun MountaineeringStatsSection(
         nowCal.get(java.util.Calendar.HOUR_OF_DAY) + nowCal.get(java.util.Calendar.MINUTE) / 60.0
     }
 
-    val statsPeakLocalTimeText = remember(mountain, currentHourUTC) {
+    val statsPeakLocalTimeText = remember(mountain, currentHourUTC, apiUtcOffsetSeconds) {
         try {
-            val peakOffset = com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+            val peakOffset = com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+                apiUtcOffsetSeconds = apiUtcOffsetSeconds,
+                name = mountain.name,
+                latitude = mountain.latitude,
+                longitude = mountain.longitude
+            )
             val localHour = (currentHourUTC + peakOffset + 24.0) % 24.0
             val formatted = com.example.ui.util.AstronomicalCalculator.formatFractionalHour(localHour)
             val persianTime = "\u200E" + com.example.ui.util.PersianDateHelper.formatToPersianDigits(formatted)
@@ -8143,7 +8162,12 @@ fun MountaineeringStatsSection(
                 elevation = altitude.toDouble(),
                 date = calculationDate
             )
-            val isMoonInSky = currentAltitude >= 0.0
+            val isMoonInSky = com.example.ui.util.AstronomicalCalculator.isMoonAboveHorizon(
+                latitude = mountain.latitude,
+                longitude = mountain.longitude,
+                elevation = altitude.toDouble(),
+                date = calculationDate
+            )
             
             val illuminationPercent = details.illuminationPercent
             
@@ -10383,7 +10407,7 @@ fun HourlyForecastSection(
                     referenceWind = rawWindSp,
                     referenceElevation = mountain.altitude.toDouble(),
                     targetAltitude = altitude.toDouble(),
-                    alpha = 0.15
+                    alpha = null
                 )
                 val windSpeedPersian = PersianDateHelper.formatToPersianDigits(adjWindSp.toInt())
 
@@ -10418,7 +10442,7 @@ fun HourlyForecastSection(
                     referenceWind = rawWindGusts,
                     referenceElevation = mountain.altitude.toDouble(),
                     targetAltitude = altitude.toDouble(),
-                    alpha = 0.15
+                    alpha = null
                 )
                 val windGustsP = PersianDateHelper.formatToPersianDigits(adjWindGusts.toInt())
                 
@@ -11481,7 +11505,7 @@ fun DailyForecastSection(
                 referenceWind = rawWindMax,
                 referenceElevation = mountain.altitude.toDouble(),
                 targetAltitude = altitude.toDouble(),
-                alpha = 0.15
+                alpha = null
             )
 
             val rawGustsMax = MountaineeringHelper.normalizeWindSpeed(daily.windGusts10mMax?.getOrNull(i) ?: (rawWindMax * MountaineeringHelper.calculateDynamicGustFactor(null)))
@@ -11489,7 +11513,7 @@ fun DailyForecastSection(
                 referenceWind = rawGustsMax,
                 referenceElevation = mountain.altitude.toDouble(),
                 targetAltitude = altitude.toDouble(),
-                alpha = 0.15
+                alpha = null
             )
 
             val worstTemp = adjTempMin
@@ -11596,7 +11620,7 @@ fun DailyForecastSection(
                             referenceWind = normWindSp,
                             referenceElevation = mountain.altitude.toDouble(),
                             targetAltitude = altitude.toDouble(),
-                            alpha = 0.15
+                            alpha = null
                         )
                         val isNightHour2 = hourly.isDay?.getOrNull(absoluteHourIdx) == 0
                         val adjApparent = com.example.ui.util.MountaineeringHelper.calculateWindChill(adjTemp, adjWindSp, isNight = isNightHour2)
@@ -11607,7 +11631,7 @@ fun DailyForecastSection(
                             referenceWind = normWindGusts,
                             referenceElevation = mountain.altitude.toDouble(),
                             targetAltitude = altitude.toDouble(),
-                            alpha = 0.15
+                            alpha = null
                         )
                         val precMm = hourly.precipitation?.getOrNull(absoluteHourIdx) ?: 0.0
                         val snowfallVal = hourly.snowfall?.getOrNull(absoluteHourIdx) ?: 0.0
@@ -12062,14 +12086,14 @@ fun DailyDetailExpandablePanel(
             referenceWind = rawWindMax,
             referenceElevation = mountain.altitude.toDouble(),
             targetAltitude = altitude.toDouble(),
-            alpha = 0.15
+            alpha = null
         )
         val rawGustsMax = daily.windGusts10mMax?.getOrNull(index) ?: (rawWindMax * MountaineeringHelper.calculateDynamicGustFactor(null))
         val adjWindGustsMax = MountaineeringHelper.adjustWindWithAltitude(
             referenceWind = rawGustsMax,
             referenceElevation = mountain.altitude.toDouble(),
             targetAltitude = altitude.toDouble(),
-            alpha = 0.15
+            alpha = null
         )
 
         val rawTempMax = daily.temperature2mMax.getOrNull(index) ?: 0.0
@@ -12251,7 +12275,14 @@ fun DailyDetailExpandablePanel(
                 tzOffset = peakOffsetHours
             )
             
-            climbEffectiveIllumVal = if (climbMoonAltitudeVal >= 0.0) {
+            climbEffectiveIllumVal = if (
+                com.example.ui.util.AstronomicalCalculator.isMoonAboveHorizon(
+                    latitude = mountain.latitude,
+                    longitude = mountain.longitude,
+                    elevation = altitude.toDouble(),
+                    date = localClimbingDate
+                )
+            ) {
                 val altRad = Math.toRadians(climbMoonAltitudeVal)
                 val factor = Math.sin(altRad).coerceIn(0.0, 1.0)
                 climbDetails.illuminationPercent * factor

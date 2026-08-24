@@ -218,17 +218,26 @@ object MountaineeringHelper {
         return 6.112 * exp((17.67 * tempC) / (tempC + 243.5))
     }
 
-    // ۱.۲ تصحیح سرعت باد با ارتفاع (Power Law طبق استاندارد ۵.۲ و ۶.۲)
+    // ۱.۲ تصحیح سرعت باد با ارتفاع (Power Law)
+    // برای زمین باز (open flat terrain) نمای ۰.۱۵ استاندارد است، اما در ارتفاعات کوهستانی و خط‌الرأس‌ها
+    // برش باد (wind shear) قوی‌تر بوده و نمای ۰.۲۰ تا ۰.۳۰ مطابق ادبیات هواشناسی کوهستان به کار می‌رود.
+    // در اینجا نمای α به صورت خودکار بر اساس ارتفاعِ بالاتر (مرجع یا هدف) انتخاب می‌شود؛
+    // مقدار صریح ارسالی از سوی فراخواننده همیشه اولویت دارد.
     fun adjustWindWithAltitude(
         referenceWind: Double,
         referenceElevation: Double,
         targetAltitude: Double,
-        alpha: Double = 0.15
+        alpha: Double? = null
     ): Double {
         if (referenceWind <= 0.0 || targetAltitude <= 0.0 || referenceElevation <= 0.0) return referenceWind
         val ratio = targetAltitude / referenceElevation
         if (ratio <= 0.0) return referenceWind
-        return referenceWind * ratio.pow(alpha)
+        val effectiveAlpha = alpha ?: when {
+            maxOf(referenceElevation, targetAltitude) >= 3000.0 -> 0.25
+            maxOf(referenceElevation, targetAltitude) >= 1500.0 -> 0.20
+            else -> 0.15
+        }
+        return referenceWind * ratio.pow(effectiveAlpha)
     }
 
     // ۱.۳ تصحیح رطوبت نسبی با ارتفاع (Mixing Ratio)
@@ -247,7 +256,7 @@ object MountaineeringHelper {
         return newHumidity.coerceIn(0.0, 100.0)
     }
 
-    // ۱.۴ محاسبه دقیق فشار بارومتریک استاندارد هوانوردی و کوهنوردی (ICAO/WMO Standard Atmosphere with QNH Calibration)
+    // ۱.۴ محاسبه فشار بارومتریک با فرمول هایپسومتریک (Hypsometric) و کالیبراسیون QNH
     fun calculateBarometricPressure(
         basePressure: Double?,
         baseTemp: Double,
@@ -258,16 +267,15 @@ object MountaineeringHelper {
     ): Double {
         val targetAltDouble = targetAltitude.coerceAtLeast(0.0)
 
-        // ۱. اگر فشار پایه معتبر موجود باشد، محاسبه هایپسومتریک استاندارد هوانوردی و کوهنوردی (ICAO/WMO)
+        // ۱. اگر فشار پایه معتبر موجود باشد، فرمول هایپسومتریک با دمای سطح مرجع به کار می‌رود:
+        // P = P0 · (1 − (L·Δh)/T0)^(g·M/(R·L))  که در آن T0 دمای مطلق در ارتفاع پایه است.
+        // توجه: targetTemp برای سازگاری API حفظ شده و در فرمول استاندارد (که به T0 نیاز دارد) استفاده نمی‌شود.
         if (basePressure != null && basePressure > 100.0) {
             val diff = targetAltitude - baseAltitude
             if (diff == 0.0) return basePressure.coerceIn(200.0, 1100.0)
 
             val tBaseK = (baseTemp + 273.15).coerceAtLeast(200.0)
-            val tTarget = targetTemp ?: (baseTemp - 0.0065 * diff)
-            val tTargetK = (tTarget + 273.15).coerceAtLeast(200.0)
 
-            // فرمول هایپسومتریک استاندارد هوانوردی و کوهنوردی ICAO با دمای سطح مرجع
             val adjusted = basePressure * (1.0 - (0.0065 * diff) / tBaseK).pow(5.25588)
             return adjusted.coerceIn(200.0, 1100.0)
         }
@@ -293,7 +301,9 @@ object MountaineeringHelper {
         qnh = qnh
     )
 
-    // محاسبه ارتفاع بارومتریک از روی فشار با فرمول هایپسومتریک ICAO و کالیبراسیون QNH
+    // محاسبه ارتفاع بارومتریک از روی فشار با فرمول هایپسومتریک دمایی (Temperature-Corrected Hypsometric)
+    // توجه: برخلاف فرمول خالص ISA (که T₀=۲۸۸.۱۵K ثابت دارد)، این تابع از دمای واقعی سطح مرجع استفاده می‌کند
+    // که در عمل برای شرایط محلی دقیق‌تر است.
     fun calculateBarometricAltitude(
         pressure: Double,
         qnh: Double = 1013.25,
@@ -430,9 +440,10 @@ object MountaineeringHelper {
         }
 
         // ۴. سطح ۲ (Fallback): استفاده از تابش موج کوتاه ساعتی در صورت عدم دسترسی به داده روزانه (W/m²)
+        // ضریب تبدیل: UVI ≈ 0.004 × GHI (W/m²) برای آسمان صاف، یعنی UVI ≈ GHI / 250
         val swRad = if (targetIdx != null && targetIdx >= 0) hourly?.shortwaveRadiation?.getOrNull(targetIdx) else null
         if (swRad != null && swRad > 0.0) {
-            var uv = swRad / 100.0
+            var uv = swRad / 250.0
 
             // ضریب ارتفاع اضافی نسبت به ارتفاع مرجع
             val diffElev = (altitude - mountainAltitude).coerceAtLeast(0)
@@ -466,13 +477,13 @@ object MountaineeringHelper {
             referenceWind = cur.windSpeed80m ?: cur.windSpeed10m ?: 0.0,
             referenceElevation = mountainAltitude.toDouble(),
             targetAltitude = targetAltitude.toDouble(),
-            alpha = 0.15
+            alpha = null
         )
         val adjWind10mAtStep = adjustWindWithAltitude(
             referenceWind = cur.windSpeed10m ?: 0.0,
             referenceElevation = mountainAltitude.toDouble(),
             targetAltitude = targetAltitude.toDouble(),
-            alpha = 0.15
+            alpha = null
         )
         val estApparentAtStep = cur.apparentTemperature?.let { it + (diff * 0.0065) } ?: calculateWindChill(tempAtStep, estWind80mAtStep)
 
@@ -500,7 +511,7 @@ object MountaineeringHelper {
             referenceWind = baseWindGusts,
             referenceElevation = mountainAltitude.toDouble(),
             targetAltitude = targetAltitude.toDouble(),
-            alpha = 0.15
+            alpha = null
         )
 
         val offsetHours = AstronomicalCalculator.getStandardTimezoneOffset(mountainName, lat, lon)
@@ -957,10 +968,13 @@ object MountaineeringHelper {
     fun calculateWindChill(temp: Double, windSpeed: Double, isNight: Boolean = false): Double {
         val safeWind = if (windSpeed < 0) 0.0 else windSpeed
         if (temp > 10.0 || safeWind < 4.8) return temp
-        val baseChill = 13.12 + (0.6215 * temp) - (11.37 * safeWind.pow(0.16)) + (0.3965 * temp * safeWind.pow(0.16))
-        val nightAdjustment = if (isNight && safeWind >= 10.0) -1.5 else 0.0
-        val totalChill = baseChill + nightAdjustment
-        return minOf(totalChill, temp)
+        // NWS/NOAA wind chill formula: 13.12 + 0.6215·T − 11.37·V^0.16 + 0.3965·T·V^0.16
+        // Valid for T ≤ 10°C and V ≥ 4.8 km/h. isNight is accepted for API compatibility but
+        // does not affect the standard calculation (no nighttime adjustment per NWS standard).
+        return minOf(
+            13.12 + (0.6215 * temp) - (11.37 * safeWind.pow(0.16)) + (0.3965 * temp * safeWind.pow(0.16)),
+            temp
+        )
     }
 
     fun calculateApparentTemperature(
@@ -1443,7 +1457,7 @@ object MountaineeringHelper {
         val windSurge1h = safeWind80m - wind1hAgoRaw
         val gustSurge1h = gustNow - gust1hAgoRaw
 
-        val gust3hAgo = if (gust3hAgoRaw == gustNow) gustNow else adjustWindWithAltitude(gust3hAgoRaw, summitElevation ?: altitude.toDouble(), altitude.toDouble(), 0.15)
+        val gust3hAgo = if (gust3hAgoRaw == gustNow) gustNow else adjustWindWithAltitude(gust3hAgoRaw, summitElevation ?: altitude.toDouble(), altitude.toDouble())
         val gustJump3h = gustNow - gust3hAgo
 
         // ======== تفکیک پویای نوع بارش بر اساس دمای لحظه‌ای (Rain / Snow / Freezing Rain) ========

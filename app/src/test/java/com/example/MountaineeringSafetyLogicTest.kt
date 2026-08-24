@@ -416,16 +416,18 @@ class MountaineeringSafetyLogicTest {
         )
         assertEquals(0.0, uvHour5, 0.01)
 
-        // 06:00 Dawn (50 W/m² => 0.5 base) at 5670m (diffElev = 0 because altitude=mountainAltitude defaults) => ~0.5
+        // 06:00 Dawn (50 W/m² => 0.2 base with the standard UVI ≈ GHI/250 conversion)
+        // at 5670m (diffElev = 0 because altitude=mountainAltitude defaults) => ~0.2
         val uvHour6 = MountaineeringHelper.calculateResolvedUvIndex(
             current = dayCurrent,
             hourly = hourlyWithSwRad,
             altitude = 5670,
             hourlyIndex = 1
         )
-        assertTrue(uvHour6 in 0.4..0.6)
+        assertTrue(uvHour6 in 0.15..0.25)
 
-        // 12:00 Noon Peak (780 W/m² => 7.8 base) at 5670m (diffElev = 0) with snow (1.4x) => 7.8 * 1.4 ≈ 10.9
+        // 12:00 Noon Peak (780 W/m² => 3.12 base with UVI ≈ GHI/250) at 5670m (diffElev = 0)
+        // with snow (1.4x) => 3.12 * 1.4 ≈ 4.37
         val uvHour12WithSnow = MountaineeringHelper.calculateResolvedUvIndex(
             current = dayCurrent,
             hourly = hourlyWithSwRad,
@@ -433,7 +435,7 @@ class MountaineeringSafetyLogicTest {
             snowCover = true,
             hourlyIndex = 2
         )
-        assertTrue(uvHour12WithSnow in 10.0..12.0)
+        assertTrue(uvHour12WithSnow in 4.0..4.7)
 
         // 3. Fallback to daily max with diurnal curve
         val dailyWithUv = DailyData(

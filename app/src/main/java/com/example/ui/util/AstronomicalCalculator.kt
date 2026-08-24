@@ -1,6 +1,5 @@
 package com.example.ui.util
 
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.*
@@ -54,7 +53,13 @@ object AstronomicalCalculator {
 
     // ---------- Timezone Detection ----------
     /**
-     * Estimates the official standard timezone offset in hours for any peak name & coordinates.
+     * Estimates the STANDARD timezone offset in hours (ignoring Daylight Saving Time)
+     * for any peak name & coordinates.
+     *
+     * Note: This returns the standard-time offset only. For locations that observe DST
+     * (e.g. Mont Blanc/Matterhorn, Denali), the offset can be off by ±1 hour during DST.
+     * Prefer [resolvePeakOffset] whenever the Open-Meteo API's DST-aware
+     * `utc_offset_seconds` is available.
      */
     fun getStandardTimezoneOffset(name: String, latitude: Double, longitude: Double): Double {
         val lowerName = name.lowercase(Locale.US)
@@ -93,6 +98,27 @@ object AstronomicalCalculator {
         }
     }
 
+    /**
+     * Resolves the effective peak timezone offset (in hours) for display purposes.
+     *
+     * Prefers the DST-aware offset provided by the Open-Meteo API response
+     * (`utc_offset_seconds`, in seconds), falling back to the standard-time estimate
+     * from [getStandardTimezoneOffset]. Use this whenever the API offset is available so
+     * that peak-local clock and sun/moon times remain correct during Daylight Saving Time.
+     */
+    fun resolvePeakOffset(
+        apiUtcOffsetSeconds: Int?,
+        name: String,
+        latitude: Double,
+        longitude: Double
+    ): Double {
+        return if (apiUtcOffsetSeconds != null) {
+            apiUtcOffsetSeconds / 3600.0
+        } else {
+            getStandardTimezoneOffset(name, latitude, longitude)
+        }
+    }
+
     // ---------- Core Utilities ----------
     fun getJulianDay(date: Date): Double {
         val timeMs = date.time
@@ -120,10 +146,9 @@ object AstronomicalCalculator {
      * using NOAA's full precision algorithm.
      */
     fun calculateSolarDetails(date: Date): Pair<Double, Double> {
-        val cal = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
-        cal.time = date
-        val doy = cal.get(Calendar.DAY_OF_YEAR)
-        val hour = cal.get(Calendar.HOUR_OF_DAY)
+        val utcDateTime = date.toInstant().atZone(java.time.ZoneOffset.UTC)
+        val doy = utcDateTime.dayOfYear
+        val hour = utcDateTime.hour
 
         // Fractional year in radians
         val gamma = (2.0 * PI / 365.0) * (doy - 1 + (hour - 12.0) / 24.0)
@@ -332,13 +357,10 @@ object AstronomicalCalculator {
         tzOffset: Double = 3.5
     ): MoonTimesUTC {
         // 1. Target day UTC midnight
-        val cal = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
-        cal.time = date
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        val midnightDate = cal.time
+        val midnightDate = date.toInstant().atZone(java.time.ZoneOffset.UTC)
+            .toLocalDate()
+            .atStartOfDay(java.time.ZoneOffset.UTC)
+            .let { java.util.Date.from(it.toInstant()) }
         val jdMidnight = getJulianDay(midnightDate)
 
         // 2. Compute Moon's position at start, middle and end of local observer's day:
@@ -437,8 +459,11 @@ object AstronomicalCalculator {
     }
 
     /**
-     * Calculates the Moon's altitude in degrees at the exact specified date/time,
-     * accounting for observer latitude, longitude, and elevation dip.
+     * Calculates the Moon's TRUE geometric altitude (elevation angle) in degrees above the
+     * astronomical horizon, accounting for observer latitude and longitude.
+     *
+     * Note: atmospheric refraction and the observer's elevation dip are NOT applied here.
+     * Use [isMoonAboveHorizon] for a rise/set check that accounts for those effects.
      */
     fun getMoonAltitude(
         latitude: Double,
@@ -460,18 +485,12 @@ object AstronomicalCalculator {
         // Spherical trigonometry for Altitude (sin_alt)
         val sinAlt = sin(latRad) * sin(deltaRad) + cos(latRad) * cos(deltaRad) * cos(haRad)
         val altRad = asin(sinAlt.coerceIn(-1.0, 1.0))
-        val altDeg = radToDeg(altRad)
-
-        // Adjust for dip and refraction
-        val dipDeg = (1.92 * sqrt(elevation.coerceAtLeast(0.0))) / 60.0
-        val threshold = 0.125 - dipDeg
-
-        return altDeg - threshold
+        return radToDeg(altRad)
     }
 
     /**
-     * Calculates if the Moon is currently above the horizon at the exact specified date/time,
-     * accounting for observer latitude, longitude, and elevation dip.
+     * Returns true when the Moon is above the visible horizon, accounting for standard
+     * refraction/parallax (+0.125°) and the observer's elevation dip.
      */
     fun isMoonAboveHorizon(
         latitude: Double,
@@ -479,7 +498,10 @@ object AstronomicalCalculator {
         elevation: Double,
         date: Date
     ): Boolean {
-        return getMoonAltitude(latitude, longitude, elevation, date) >= 0.0
+        val altDeg = getMoonAltitude(latitude, longitude, elevation, date)
+        val dipDeg = (1.92 * sqrt(elevation.coerceAtLeast(0.0))) / 60.0
+        val threshold = 0.125 - dipDeg
+        return altDeg >= threshold
     }
 
     // ---------- LUNAR PHASE & ILLUMINATION ----------
