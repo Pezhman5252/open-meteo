@@ -7,6 +7,7 @@ import com.example.data.local.AppDatabase
 import com.example.data.local.SettingsDataStore
 import com.example.data.remote.OpenMeteoApiService
 import com.example.data.remote.WeatherResponse
+import retrofit2.Response
 import com.example.data.repository.MountainRepository
 import com.example.data.repository.WeatherRepository
 import com.example.ui.weather.WeatherViewModel
@@ -82,7 +83,7 @@ class PremiumSubscriptionTest {
                 precipitationUnit: String,
                 forecastDays: Int,
                 timezone: String
-            ): WeatherResponse {
+            ): Response<WeatherResponse> {
                 throw NotImplementedError("Stub api is not supposed to be called in this test.")
             }
         }

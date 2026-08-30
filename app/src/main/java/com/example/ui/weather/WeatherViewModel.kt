@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.MountainEntity
+import com.example.data.remote.OpenMeteoApiException
 import com.example.data.remote.WeatherResponse
 import com.example.data.repository.MountainRepository
 import com.example.data.repository.WeatherRepository
@@ -770,6 +771,12 @@ class WeatherViewModel(
     private fun getFriendlyError(throwable: Throwable): Pair<String, WeatherErrorType> {
         val msg = throwable.localizedMessage ?: ""
         return when {
+            // Open-Meteo HTTP 400 validation error: surface the API reason to the user
+            throwable is OpenMeteoApiException -> {
+                val reason = throwable.apiReason?.takeIf { it.isNotBlank() }
+                    ?: "پارامترهای درخواست هواشناسی نامعتبر است (HTTP ${throwable.httpCode})."
+                Pair("خطای سامانه هواشناسی: $reason", WeatherErrorType.SERVER_ERROR)
+            }
             throwable is java.net.UnknownHostException ||
             msg.contains("UnknownHostException", ignoreCase = true) ||
             msg.contains("No address associated with hostname", ignoreCase = true) ||

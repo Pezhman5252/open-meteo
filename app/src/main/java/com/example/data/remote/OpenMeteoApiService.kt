@@ -1,5 +1,6 @@
 package com.example.data.remote
 
+import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Query
 
@@ -28,5 +29,5 @@ interface OpenMeteoApiService {
         @Query("precipitation_unit") precipitationUnit: String = "mm",
         @Query("forecast_days") forecastDays: Int = 7,
         @Query("timezone") timezone: String = "auto"
-    ): WeatherResponse
+    ): Response<WeatherResponse>
 }
