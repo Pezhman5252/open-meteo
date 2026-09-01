@@ -203,9 +203,9 @@ detekt {
     ignoreFailures = true
 }
 
-// The only JDK available on this machine is Android Studio's JBR (Java 25),
-// which the bundled detekt 1.23.8 compiler does not support as a --jvm-target.
-// Pin it to the same Java 11 target the module already compiles against.
+// detekt 1.23.8's bundled compiler accepts --jvm-target only up to 22 and
+// cannot run on a JDK 23+ JVM at all. Pin it to the same Java 11 target the
+// module already compiles against so detekt works on any supported JDK.
 tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
     jvmTarget = "11"
 }
