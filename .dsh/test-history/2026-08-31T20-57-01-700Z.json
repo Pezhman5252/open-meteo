@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-08-31T20:57:01.700Z",
+  "task": ":app:testDebugUnitTest",
+  "modules": [
+    ":app"
+  ],
+  "testType": "jvm",
+  "total": 37,
+  "passed": 37,
+  "failed": 0,
+  "skipped": 0,
+  "durationMs": 355057
+}

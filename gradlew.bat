@@ -45,7 +45,17 @@ set JAVA_EXE=java.exe
 %JAVA_EXE% -version >NUL 2>&1
 if %ERRORLEVEL% equ 0 goto execute
 
-@rem Added: auto-detect a JDK from common Android Studio / IntelliJ installations
+@rem Added: auto-detect a compatible JDK (17-22) from standard system locations
+@rem when JAVA_HOME is not set and java is not on PATH. This is preferred over
+@rem the Android Studio JBR because detekt 1.23.8 cannot run on JDK 23+.
+for /d %%i in ("C:\Program Files\Eclipse Adoptium\jdk-*") do (
+    if exist "%%i\bin\java.exe" (
+        set "JAVA_HOME=%%i"
+        set "JAVA_EXE=%%i\bin\java.exe"
+        goto execute
+    )
+)
+@rem Fallback: auto-detect a JDK from common Android Studio / IntelliJ installations.
 @rem when JAVA_HOME is not set and java is not on PATH.
 set "DEFAULT_JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
 if exist "%DEFAULT_JAVA_HOME%\bin\java.exe" (
