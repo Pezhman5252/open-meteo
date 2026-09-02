@@ -1913,14 +1913,18 @@ fun MountainHeroCard(
         maxOf(calculatedWind, baseWind10m)
     }
 
-    val activeGusts = remember(baseGusts10m, mountain.altitude, activeAltitude) {
+    val activeGusts = remember(baseGusts10m, current?.cape, mountain.altitude, activeAltitude, activeWind) {
+        // Power-law altitude scaling from the summit gust — same model as the wind,
+        // so gusts DO decrease on the lower slopes instead of staying pinned to the summit value.
         val calculatedGusts = MountaineeringHelper.adjustWindWithAltitude(
             referenceWind = baseGusts10m,
             referenceElevation = mountain.altitude.toDouble(),
             targetAltitude = activeAltitude.toDouble(),
             alpha = null
         )
-        maxOf(calculatedGusts, baseGusts10m)
+        // No summit-value floor here. Only enforce the physical invariant that a gust is
+        // never weaker than the CAPE-scaled local wind (which itself already varies by altitude).
+        maxOf(calculatedGusts, activeWind * MountaineeringHelper.calculateDynamicGustFactor(current?.cape))
     }
 
     val activePressure = remember(current, mountain.altitude, activeAltitude, activeTemp) {
@@ -2117,10 +2121,11 @@ fun MountainHeroCard(
                                             .background(if (isDark) Color(0xFFFFB300) else Color(0xFFB45309))
                                     )
                                     Text(
-                                        text = if (pTime.isNotEmpty()) "پیش‌بینی کوتاه‌مدت ($pTime)" else "پیش‌بینی کوتاه‌مدت",
+                                        text = if (pTime.isNotEmpty()) "پیش‌بینی ($pTime)" else "پیش‌بینی",
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (isDark) Color(0xFFFFB300) else Color(0xFFB45309)
+                                        color = if (isDark) Color(0xFFFFB300) else Color(0xFFB45309),
+                                        maxLines = 1
                                     )
                                 }
                             }
@@ -2262,7 +2267,9 @@ fun MountainHeroCard(
                         text = "جبهه صعود تحت ارزیابی: ${PersianDateHelper.formatToPersianDigits(activeAltitude)} متر (${activeZoneLabel})",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        color = getTextColor(0.85f)
+                        color = getTextColor(0.85f),
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
                 
@@ -2424,127 +2431,222 @@ fun MountainHeroCard(
                             val absAppAlert = kotlin.math.abs(activeApparent)
                             val pAppAlertFormatted = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", absAppAlert))
                             val appAlertSign = if (activeApparent < -0.05) "−" else if (activeApparent > 0.05) "+" else ""
-                            val pWindAlert = PersianDateHelper.formatToPersianDigits(activeWind.toInt())
+                            val pWindAlert = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.0f", activeWind))
                             Text(
-                                text = "⚠️ ورود به منطقه طوفانی / پرخطر در ارتفاع ${PersianDateHelper.formatToPersianDigits(activeAltitude)} متر (باد: $pWindAlert کیلومتر/ساعت | احساسی: \u200E$appAlertSign$pAppAlertFormatted°C)",
+                                text = "⚠️ منطقه پرخطر در ${PersianDateHelper.formatToPersianDigits(activeAltitude)} متر (باد: $pWindAlert ک‌م/س | احساسی: \u200E$appAlertSign$pAppAlertFormatted°C)",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (isDark) Color(0xFFFF8A80) else Color(0xFFB91C1C),
                                 lineHeight = 15.sp,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                     }
 
-                    // 6. Main Prominent RealFeel Temperature Readout
-                    Row(
+                    // 6. Main Prominent RealFeel Temperature Readout (centered) + 3-column metric tiles
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Column {
-                            val hasWindChillEffect = activeTemp <= 10.0 && activeWind >= 4.8 && (activeTemp - activeApparent) >= 0.2
-                            val hasHeatIndexEffect = activeTemp >= 27.0 && (activeApparent - activeTemp) >= 0.2
+                        val hasWindChillEffect = activeTemp <= 10.0 && activeWind >= 4.8 && (activeTemp - activeApparent) >= 0.2
+                        val hasHeatIndexEffect = activeTemp >= 27.0 && (activeApparent - activeTemp) >= 0.2
 
-                            val mainDisplayTemp = if (hasWindChillEffect || hasHeatIndexEffect) activeApparent else activeTemp
-                            val absMainTemp = kotlin.math.abs(mainDisplayTemp)
-                            val pMainTempFormatted = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", absMainTemp))
-                            val mainSign = if (mainDisplayTemp < -0.05) "−" else if (mainDisplayTemp > 0.05) "+" else ""
-                            
-                            val mainLabel = when {
-                                hasWindChillEffect -> "دمای احساسی (شاخص سوزباد)"
-                                hasHeatIndexEffect -> "شاخص گرما"
-                                else -> "دمای واقعی هوا"
-                            }
-                            
+                        val mainDisplayTemp = if (hasWindChillEffect || hasHeatIndexEffect) activeApparent else activeTemp
+                        val absMainTemp = kotlin.math.abs(mainDisplayTemp)
+                        val pMainTempFormatted = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", absMainTemp))
+                        val mainSign = if (mainDisplayTemp < -0.05) "−" else if (mainDisplayTemp > 0.05) "+" else ""
+
+                        val mainLabel = when {
+                            hasWindChillEffect -> "دمای احساسی (شاخص سوزباد)"
+                            hasHeatIndexEffect -> "شاخص گرما"
+                            else -> "دمای واقعی هوا"
+                        }
+
+                        Text(
+                            text = mainLabel,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = getTextColor(0.6f)
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text(
-                                text = mainLabel,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = getTextColor(0.6f)
+                                text = "\u200E$mainSign$pMainTempFormatted°C",
+                                fontSize = 34.sp,
+                                fontWeight = FontWeight.Black,
+                                color = if (mainDisplayTemp <= 0.0) (if (isDark) Color(0xFF00E5FF) else Color(0xFF00838F)) else (if (isDark) Color(0xFF00FF87) else Color(0xFF15803D))
                             )
-                            
-                            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(
-                                    text = "\u200E$mainSign$pMainTempFormatted°C",
-                                    fontSize = 30.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = if (mainDisplayTemp <= 0.0) (if (isDark) Color(0xFF00E5FF) else Color(0xFF00838F)) else (if (isDark) Color(0xFF00FF87) else Color(0xFF15803D))
-                                )
-                                
-                                if (hasWindChillEffect || hasHeatIndexEffect) {
-                                    val absDry = kotlin.math.abs(activeTemp)
-                                    val pDryFormatted = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", absDry))
-                                    val drySign = if (activeTemp < -0.05) "−" else if (activeTemp > 0.05) "+" else ""
+
+                            if (hasWindChillEffect || hasHeatIndexEffect) {
+                                val absDry = kotlin.math.abs(activeTemp)
+                                val pDryFormatted = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", absDry))
+                                val drySign = if (activeTemp < -0.05) "−" else if (activeTemp > 0.05) "+" else ""
+                                Surface(
+                                    shape = RoundedCornerShape(9.dp),
+                                    color = getTextColor(0.05f),
+                                    border = BorderStroke(0.6.dp, getTextColor(0.10f))
+                                ) {
                                     Text(
-                                        text = "(واقعی: \u200E$drySign$pDryFormatted°C)",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = getTextColor(0.55f),
-                                        modifier = Modifier.padding(bottom = 4.dp)
-                                    )
-                                } else if (activeTemp <= 10.0 && activeWind < 4.8) {
-                                    Text(
-                                        text = "(بدون اثر سوزباد)",
+                                        text = "واقعی: \u200E$drySign$pDryFormatted°C",
                                         fontSize = 10.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        color = getTextColor(0.45f),
-                                        modifier = Modifier.padding(bottom = 4.dp)
+                                        fontWeight = FontWeight.Bold,
+                                        color = getTextColor(0.6f),
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        maxLines = 1
                                     )
                                 }
+                            } else if (activeTemp <= 10.0 && activeWind < 4.8) {
+                                Text(
+                                    text = "(بدون اثر سوزباد)",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Normal,
+                                    color = getTextColor(0.45f),
+                                    modifier = Modifier.padding(bottom = 6.dp)
+                                )
                             }
                         }
 
-                        // Key Wind & Pressure Pills for active altitude
-                        Column(
-                            horizontalAlignment = Alignment.End,
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Three equal-width metric tiles: Wind / Gusts / Oxygen
+                        val pWind = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.0f", activeWind))
+                        val pGusts = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.0f", activeGusts))
+                        val pOxy = PersianDateHelper.formatToPersianDigits(activeOxygenPct.toInt())
+
+                        val windTileColor = if (activeWind > 35.0) (if (isDark) Color(0xFFFF5252) else Color(0xFFB91C1C)) else getAccentColor()
+                        val gustTileColor = if (activeGusts > 45.0) (if (isDark) Color(0xFFFF5252) else Color(0xFFB91C1C)) else getAccentColor()
+                        val oxyTileColor = when {
+                            activeOxygenPct < 60.0 -> if (isDark) Color(0xFFFF5252) else Color(0xFFC53030)
+                            activeOxygenPct < 75.0 -> if (isDark) Color(0xFFFFB300) else Color(0xFFB45309)
+                            else -> if (isDark) Color(0xFF00E676) else Color(0xFF2E7D32)
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            val pWind = PersianDateHelper.formatToPersianDigits(activeWind.toInt())
-                            val pGusts = PersianDateHelper.formatToPersianDigits(activeGusts.toInt())
+                            // Wind tile
                             Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = (if (activeWind > 35.0) Color(0xFFFF5252) else getAccentColor()).copy(alpha = 0.1f),
-                                border = BorderStroke(0.6.dp, (if (activeWind > 35.0) Color(0xFFFF5252) else getAccentColor()).copy(alpha = 0.3f))
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp),
+                                color = windTileColor.copy(alpha = if (isDark) 0.08f else 0.06f),
+                                border = BorderStroke(0.8.dp, windTileColor.copy(alpha = 0.35f))
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 10.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Air,
-                                        contentDescription = "Wind",
-                                        modifier = Modifier.size(12.dp),
-                                        tint = if (activeWind > 35.0) Color(0xFFFF5252) else getAccentColor()
-                                    )
+                                    Box(modifier = Modifier.height(16.dp), contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Air,
+                                            contentDescription = "Wind",
+                                            tint = windTileColor,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "باد: $pWind ک‌م/س (تندباد: $pGusts)",
-                                        fontSize = 10.sp,
+                                        text = "باد",
+                                        fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = getTextColor()
+                                        color = getTextColor(0.55f),
+                                        maxLines = 1
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "$pWind ک‌م/س",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = windTileColor,
+                                        maxLines = 1
                                     )
                                 }
                             }
 
-                            val pOxy = PersianDateHelper.formatToPersianDigits(activeOxygenPct.toInt())
-                            val pPres = PersianDateHelper.formatToPersianDigits(activePressure.toInt())
+                            // Gusts tile
                             Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = getTextColor(0.04f),
-                                border = BorderStroke(0.6.dp, getTextColor(0.08f))
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp),
+                                color = gustTileColor.copy(alpha = if (isDark) 0.08f else 0.06f),
+                                border = BorderStroke(0.8.dp, gustTileColor.copy(alpha = 0.35f))
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 10.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
+                                    Box(modifier = Modifier.height(16.dp), contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Thunderstorm,
+                                            contentDescription = "Gusts",
+                                            tint = gustTileColor,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "🫁 اکسیژن: $pOxy٪ ($pPres هکتوپاسکال)",
-                                        fontSize = 10.sp,
+                                        text = "تندباد",
+                                        fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = getTextColor(0.75f)
+                                        color = getTextColor(0.55f),
+                                        maxLines = 1
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "$pGusts ک‌م/س",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = gustTileColor,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+
+                            // Oxygen tile
+                            Surface(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp),
+                                color = oxyTileColor.copy(alpha = if (isDark) 0.08f else 0.06f),
+                                border = BorderStroke(0.8.dp, oxyTileColor.copy(alpha = 0.35f))
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 10.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Box(modifier = Modifier.height(16.dp), contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = "🫁",
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "اکسیژن",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = getTextColor(0.55f),
+                                        maxLines = 1
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "$pOxy٪",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = oxyTileColor,
+                                        maxLines = 1
                                     )
                                 }
                             }
@@ -2763,10 +2865,11 @@ fun MountainHeroCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "رادار ترازهای ارتفاعی صعود (انتخاب پله سنجش فعال):",
+                        text = "رادار پله‌های ارتفاعی:",
                         fontSize = 11.5.sp,
                         fontWeight = FontWeight.Black,
-                        color = getTextColor()
+                        color = getTextColor(),
+                        maxLines = 1
                     )
                 }
                 
@@ -2786,12 +2889,15 @@ fun MountainHeroCard(
                         val diff = mountain.altitude - step
                         val tempAtStep = peakTemp + (diff * 0.0065)
 
-                        // ✅ Wind with Power Law
-                        val estWindAtStep = MountaineeringHelper.adjustWindWithAltitude(
-                            referenceWind = peakWind80m,
-                            referenceElevation = mountain.altitude.toDouble(),
-                            targetAltitude = step.toDouble(),
-                            alpha = null
+                        // ✅ Wind with Power Law (same worst-case floor as the hero readout for consistency)
+                        val estWindAtStep = maxOf(
+                            MountaineeringHelper.adjustWindWithAltitude(
+                                referenceWind = peakWind80m,
+                                referenceElevation = mountain.altitude.toDouble(),
+                                targetAltitude = step.toDouble(),
+                                alpha = null
+                            ),
+                            baseWind10m
                         )
 
                         val cur = weather.current
@@ -2874,7 +2980,6 @@ fun MountainHeroCard(
                         val isStepLocked = !isPremium && !isSummit
                         val premiumGoldColor = if (isDark) Color(0xFFFFD700) else Color(0xFF9A6A00)
 
-                        val selectionColor = if (isDark) Color(0xFF00FF87) else Color(0xFF007A3E)
                         val frozenColor = if (isDark) Color(0xFF00E5FF) else Color(0xFF006064)
 
                         // ✅ Card Border & Background ALWAYS reflect true weather safety color (stepSafetyColor)
@@ -2921,7 +3026,7 @@ fun MountainHeroCard(
                                     Icon(
                                         imageVector = if (isSummit) Icons.Default.FilterHdr else Icons.AutoMirrored.Filled.DirectionsRun,
                                         contentDescription = if (isSummit) "Summit Peak" else "Climbing Stage",
-                                        tint = if (isSelected) selectionColor else stepSafetyColor,
+                                        tint = stepSafetyColor,
                                         modifier = Modifier.size(11.dp)
                                     )
                                     Spacer(modifier = Modifier.width(3.dp))
@@ -2941,7 +3046,8 @@ fun MountainHeroCard(
                                         text = zoneLabel,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (isSelected) selectionColor else stepSafetyColor
+                                        color = stepSafetyColor,
+                                        maxLines = 1
                                     )
                                     if (isStepLocked) {
                                         Spacer(modifier = Modifier.width(3.dp))
@@ -2974,7 +3080,7 @@ fun MountainHeroCard(
                                     text = formattedTemp,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Black,
-                                    color = if (isSelected) selectionColor else if (isStepFrozen) frozenColor else (if (isDark) Color(0xEE00FF87) else Color(0xFF007A3E))
+                                    color = if (isStepFrozen) frozenColor else (if (isDark) Color(0xEE00FF87) else Color(0xFF007A3E))
                                 )
 
                                 Spacer(modifier = Modifier.height(2.dp))
@@ -2988,7 +3094,8 @@ fun MountainHeroCard(
                                     text = "احساس: $formattedApparent",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = getTextColor(0.55f)
+                                    color = getTextColor(0.55f),
+                                    maxLines = 1
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 
@@ -2998,7 +3105,8 @@ fun MountainHeroCard(
                                     text = "باد: $formattedWindStep ک‌م/س",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = windColor
+                                    color = windColor,
+                                    maxLines = 1
                                 )
 
                                 Spacer(modifier = Modifier.height(8.dp))
