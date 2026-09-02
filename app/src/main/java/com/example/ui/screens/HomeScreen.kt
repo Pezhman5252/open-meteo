@@ -16,7 +16,9 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
@@ -849,20 +851,41 @@ fun HomeScreenContent(
     val peakTemp = weather.current?.temperature2m ?: 0.0
 
     var isRefreshing by remember { mutableStateOf(false) }
+    // Distinguishes WHICH trigger started the refresh: the drag gesture shows the pull
+    // header; the manual button only spins its own icon — they never share a UI.
+    var refreshSourceIsGesture by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
-    val handleRefresh = {
+    // Central transient status toast (replaces the bottom-anchored Snackbar for refresh feedback).
+    var refreshToast by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    val refreshToastAlpha = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(refreshToast) {
+        val toast = refreshToast ?: return@LaunchedEffect
+        refreshToastAlpha.snapTo(0f)
+        refreshToastAlpha.animateTo(
+            1f,
+            androidx.compose.animation.core.tween(220, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+        )
+        kotlinx.coroutines.delay(3000)
+        refreshToastAlpha.animateTo(
+            0f,
+            androidx.compose.animation.core.tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+        )
+        if (refreshToast?.second == toast.second) refreshToast = null
+    }
+
+    val handleRefresh = { fromGesture: Boolean ->
         if (!isRefreshing) {
             isRefreshing = true
+            refreshSourceIsGesture = fromGesture
             viewModel.refreshCurrentMountainWeather { isSuccess ->
                 isRefreshing = false
-                coroutineScope.launch {
-                    if (isSuccess) {
-                        snackbarHostState.showSnackbar("داده‌ها بروزرسانی شد")
-                    } else {
-                        snackbarHostState.showSnackbar("خطا در دریافت داده - بررسی اتصال")
-                    }
+                refreshSourceIsGesture = false
+                refreshToast = if (isSuccess) {
+                    true to "داده‌ها بروزرسانی شد"
+                } else {
+                    false to "خطا در دریافت داده - بررسی اتصال"
                 }
             }
         }
@@ -884,20 +907,72 @@ fun HomeScreenContent(
     val lazyListState = rememberLazyListState()
     var pullDistance by remember { mutableFloatStateOf(0f) }
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val refreshThresholdPx = remember(density) { with(density) { 120.dp.toPx() } }
+    val refreshThresholdPx = remember(density) { with(density) { 90.dp.toPx() } }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // DELIBERATE PULL-TO-REFRESH — final semantics (user-specified):
+    //  1. A fast fling/drag that ARRIVES at the top never shows the pull label
+    //     and never refreshes — regardless of leftover overscroll.
+    //  2. The pull arms ONLY at the START of a fresh drag that begins while the
+    //     list is ALREADY resting at the very top (DragInteraction.Start gate).
+    //  3. Once armed and the drag passes the threshold, the refresh commits
+    //     INSTANTLY mid-drag — no "release" step.
+    // ─────────────────────────────────────────────────────────────────────
+    val view = androidx.compose.ui.platform.LocalView.current
+    val isRefreshingState = rememberUpdatedState(isRefreshing)
+    val pullArmed = remember { mutableStateOf(false) }
+    // Timestamp of the last scroll event that occurred while the list was AWAY from
+    // the very top. A drag that begins within 300ms of it is a "traveling arrival"
+    // (fast scroll from below / a still-moving fling) and must NEVER arm — this
+    // closes the race where DragInteraction.Start is processed after the fling
+    // has already reached the top.
+    val lastAwayScrollMs = remember { mutableStateOf(0L) }
+
+    // Arm the pull ONLY for a fresh drag that starts while the list has been
+    // resting at the very top for at least 300ms.
+    LaunchedEffect(lazyListState) {
+        lazyListState.interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is androidx.compose.foundation.interaction.DragInteraction.Start -> {
+                    val top = lazyListState.firstVisibleItemIndex == 0 &&
+                            lazyListState.firstVisibleItemScrollOffset == 0
+                    val fresh = android.os.SystemClock.uptimeMillis() - lastAwayScrollMs.value > 300L
+                    pullArmed.value = top && fresh && !isRefreshingState.value
+                }
+                is androidx.compose.foundation.interaction.DragInteraction.Stop,
+                is androidx.compose.foundation.interaction.DragInteraction.Cancel -> {
+                    pullArmed.value = false
+                    // Safety net: if the drag ends with (near-)zero velocity and no fling
+                    // is dispatched, the header must not hang open mid-pull.
+                    if (pullDistance > 0f) pullDistance = 0f
+                }
+            }
+        }
+    }
 
     val pullScrollConnection = remember(isRefreshing, refreshThresholdPx) {
         object : NestedScrollConnection {
+            private fun atVeryTop(): Boolean =
+                lazyListState.firstVisibleItemIndex == 0 &&
+                        lazyListState.firstVisibleItemScrollOffset == 0
+
+            // Gentle progressive resistance — the real anti-fling protection is the
+            // fresh-drag gate above, so the curve stays light enough that a normal
+            // deliberate pull (≈ 400 px) reliably crosses the threshold.
+            private fun dampedDelta(raw: Float): Float {
+                val maxPull = refreshThresholdPx * 2.2f
+                if (pullDistance >= maxPull) return 0f
+                val t = pullDistance / maxPull
+                return raw * 0.85f * (1f - 0.4f * t)
+            }
+
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (available.y > 0 && lazyListState.firstVisibleItemIndex == 0 && lazyListState.firstVisibleItemScrollOffset == 0 && !isRefreshing) {
-                    pullDistance += available.y * 0.45f
-                    if (pullDistance >= refreshThresholdPx) {
-                        pullDistance = 0f
-                        handleRefresh()
-                    }
-                    return Offset(0f, available.y * 0.45f)
+                // Any scroll motion while away from the top marks the list as "moving".
+                if (!atVeryTop()) {
+                    lastAwayScrollMs.value = android.os.SystemClock.uptimeMillis()
                 }
-                if (available.y < 0 && pullDistance > 0f) {
+                // Drag in progress: consume upward motion to retract the pull indicator.
+                if (available.y < 0f && pullDistance > 0f) {
                     pullDistance = maxOf(0f, pullDistance + available.y)
                     return Offset(0f, available.y)
                 }
@@ -905,15 +980,33 @@ fun HomeScreenContent(
             }
 
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                if (available.y > 0 && lazyListState.firstVisibleItemIndex == 0 && lazyListState.firstVisibleItemScrollOffset == 0 && !isRefreshing) {
-                    pullDistance += available.y * 0.45f
-                    if (pullDistance >= refreshThresholdPx) {
-                        pullDistance = 0f
-                        handleRefresh()
+                if (available.y > 0f && atVeryTop() && !isRefreshing) {
+                    if (pullArmed.value) {
+                        val before = pullDistance
+                        pullDistance = (pullDistance + dampedDelta(available.y)).coerceAtLeast(0f)
+                        // Refresh commits the INSTANT the live drag crosses the threshold.
+                        if (before < refreshThresholdPx && pullDistance >= refreshThresholdPx) {
+                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                            pullDistance = 0f
+                            pullArmed.value = false
+                            handleRefresh(true)
+                        }
                     }
+                    // ALWAYS consume the leftover at top: an unarmed arrival (fast scroll
+                    // from below) shows NO label, and consuming prevents the Android-12
+                    // stretch overscroll from activating and swallowing the drag stream
+                    // (which would starve the armed path of its deltas).
                     return Offset(0f, available.y)
                 }
                 return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (pullDistance > 0f) {
+                    pullDistance = 0f
+                }
+                pullArmed.value = false
+                return Velocity.Zero
             }
         }
     }
@@ -1035,54 +1128,62 @@ fun HomeScreenContent(
             .nestedScroll(pullScrollConnection)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            AnimatedVisibility(
-                visible = isRefreshing || pullDistance > 20f,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
+            // Pull-to-refresh indicator — exclusive to the drag gesture. Shown only while
+            // the finger holds the pull (or while a GESTURE-initiated refresh runs).
+            // The manual button NEVER opens it — it spins its own icon in the hero card.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = pullDistance > 4f || (isRefreshing && refreshSourceIsGesture),
+                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(),
+                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically()
             ) {
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 6.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    color = getAccentColor().copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(18.dp),
+                    color = getCardBgColor(Color(0xFF0C1220)),
                     border = BorderStroke(1.dp, getAccentColor().copy(alpha = 0.30f))
                 ) {
                     Row(
-                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 16.dp),
+                        modifier = Modifier.padding(vertical = 10.dp, horizontal = 16.dp),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val infiniteTransition = rememberInfiniteTransition(label = "pull_refresh_spin")
-                        val rotationAngle by if (isRefreshing) {
-                            infiniteTransition.animateFloat(
-                                initialValue = 0f,
-                                targetValue = 360f,
-                                animationSpec = infiniteRepeatable(
-                                    animation = tween(800, easing = LinearEasing),
-                                    repeatMode = RepeatMode.Restart
-                                ),
-                                label = "spin"
-                            )
-                        } else {
-                            remember(pullDistance) { mutableFloatStateOf((pullDistance / refreshThresholdPx) * 360f) }
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(22.dp)) {
+                            if (isRefreshing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.2.dp,
+                                    color = getAccentColor()
+                                )
+                            } else {
+                                // Determinate progress ring mirroring the drag distance
+                                val sweepFraction = (pullDistance / refreshThresholdPx).coerceIn(0f, 1f)
+                                val trackColor = getTextColor(0.10f)
+                                val progressColor = getAccentColor()
+                                androidx.compose.foundation.Canvas(modifier = Modifier.size(20.dp)) {
+                                    drawCircle(
+                                        color = trackColor,
+                                        style = Stroke(width = 5f)
+                                    )
+                                    drawArc(
+                                        color = progressColor,
+                                        startAngle = -90f,
+                                        sweepAngle = 360f * sweepFraction,
+                                        useCenter = false,
+                                        style = Stroke(width = 5f, cap = StrokeCap.Round)
+                                    )
+                                }
+                            }
                         }
-
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Refreshing",
-                            tint = getAccentColor(),
-                            modifier = Modifier
-                                .size(18.dp)
-                                .rotate(rotationAngle)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = if (isRefreshing) "درحال دریافت آخرین اطلاعات هواشناسی..." else "برای بروزرسانی رها کنید",
+                            text = if (isRefreshing) "درحال دریافت آخرین اطلاعات هواشناسی..." else "برای بروزرسانی ادامه دهید",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = getTextColor(),
-                            fontFamily = Vazirmatn
+                            fontFamily = Vazirmatn,
+                            maxLines = 1
                         )
                     }
                 }
@@ -1116,7 +1217,7 @@ fun HomeScreenContent(
                         onAltitudeSelected = { alt -> viewModel.setSelectedAltitude(alt) },
                         onChangeClick = onChangePeakClick,
                         onPinToggle = { handleTogglePin(mountain) },
-                        onRefreshClick = { handleRefresh() },
+                        onRefreshClick = { handleRefresh(false) },
                         onBillingTrigger = { viewModel.triggerBilling(true) }
                     )
                 }
@@ -1207,11 +1308,67 @@ fun HomeScreenContent(
             }
         }
 
+        // Transient status toast — floats ABOVE the bottom navigation bar (never under it),
+        // centered horizontally, with a soft fade/slide so it reads clearly without
+        // covering any actionable content. Used for refresh + pin feedback.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = refreshToast != null,
+            enter = androidx.compose.animation.fadeIn() +
+                    androidx.compose.animation.slideInVertically(
+                        initialOffsetY = { it / 3 },
+                        animationSpec = androidx.compose.animation.core.tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                    ),
+            exit = androidx.compose.animation.fadeOut() +
+                    androidx.compose.animation.slideOutVertically(
+                        targetOffsetY = { it / 3 },
+                        animationSpec = androidx.compose.animation.core.tween(220, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                    ),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 145.dp, start = 32.dp, end = 32.dp)
+        ) {
+            val toast = refreshToast
+            val toastSuccess = toast?.first ?: true
+            val toastColor = if (toastSuccess) {
+                if (MaterialTheme.colorScheme.background.isDark) Color(0xFF00E676) else Color(0xFF2E7D32)
+            } else {
+                if (MaterialTheme.colorScheme.background.isDark) Color(0xFFFF5252) else Color(0xFFC62828)
+            }
+            Surface(
+                shape = RoundedCornerShape(100),
+                color = getCardBgColor(Color(0xFF101626)),
+                border = BorderStroke(1.dp, toastColor.copy(alpha = 0.45f)),
+                shadowElevation = 6.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = if (toastSuccess) Icons.Default.CheckCircle else Icons.Default.CloudOff,
+                        contentDescription = null,
+                        tint = toastColor,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = toast?.second ?: "",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = getTextColor(),
+                        fontFamily = Vazirmatn,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+
+        // Snackbar retained ONLY for pin/unpin feedback (short messages, bottom position acceptable)
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 80.dp, start = 16.dp, end = 16.dp)
+                .align(Alignment.TopCenter)
+                .padding(top = 8.dp, start = 16.dp, end = 16.dp)
         ) { snackbarData ->
             Snackbar(
                 snackbarData = snackbarData,
