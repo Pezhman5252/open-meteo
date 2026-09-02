@@ -1851,7 +1851,20 @@ fun MountainHeroCard(
     val peakTemp = current?.temperature2m ?: 0.0
     val rawWind10m = current?.windSpeed10m ?: 0.0
     val rawWind80m = current?.windSpeed80m ?: rawWind10m
-    val hourlyWindFallback = weather.hourly?.windSpeed10m?.firstOrNull() ?: 0.0
+    // Open-Meteo hourly.time starts at 00:00 today (timezone=auto), so firstOrNull() would be
+    // midnight's wind — NOT the current hour. Per the array-alignment rule (hourly.time[i] ↔
+    // hourly.windSpeed10m[i]), resolve the index that matches current.time first.
+    val hourlyWindFallback = remember(weather.current?.time, weather.hourly) {
+        val hourly = weather.hourly
+        val cur = weather.current
+        val windArr = hourly?.windSpeed10m
+        if (cur != null && windArr != null && hourly.time.isNotEmpty()) {
+            val idx = MountaineeringHelper.findHourlyIndexForCurrent(current = cur, hourly = hourly)
+            if (idx in windArr.indices) (windArr.getOrNull(idx) ?: 0.0) else 0.0
+        } else {
+            0.0
+        }
+    }
     val baseWind10m = if (rawWind10m > 0.0) rawWind10m else if (hourlyWindFallback > 0.0) hourlyWindFallback else 12.0
     val peakWind80m = maxOf(rawWind80m, baseWind10m)
     val baseGusts10m = current?.windGusts10m ?: (baseWind10m * MountaineeringHelper.calculateDynamicGustFactor(current?.cape))
