@@ -12,18 +12,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
@@ -35,9 +31,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -51,8 +44,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -153,6 +144,31 @@ class MainActivity : ComponentActivity() {
             }
             val showBillingDialog by viewModel.showBillingDialog.collectAsStateWithLifecycle()
             var currentTab by remember { mutableStateOf(AppTab.Dashboard) }
+
+            // Liquid-glass shared state: links the content backdrop to the glass bar.
+            val glassState = com.example.ui.components.rememberLiquidGlassState()
+            val glassTabs = remember {
+                listOf(
+                    com.example.ui.components.LiquidGlassTab(
+                        label = "خانه",
+                        icon = Icons.Default.Terrain,
+                        contentDescription = "خانه",
+                        testTag = "nav_item_dashboard",
+                    ),
+                    com.example.ui.components.LiquidGlassTab(
+                        label = "قله‌ها",
+                        icon = Icons.Default.Search,
+                        contentDescription = "قله‌ها",
+                        testTag = "nav_item_search",
+                    ),
+                    com.example.ui.components.LiquidGlassTab(
+                        label = "تنظیمات",
+                        icon = Icons.Default.Settings,
+                        contentDescription = "تنظیمات",
+                        testTag = "nav_item_settings",
+                    ),
+                )
+            }
 
             val activity = remember(context) { context as? Activity }
             var showExitDialog by remember { mutableStateOf(false) }
@@ -271,161 +287,69 @@ class MainActivity : ComponentActivity() {
                                         animationSpec = tween(300)
                                     ) + fadeOut(animationSpec = tween(300))
                                 ) {
+                                    // Floating liquid-glass capsule — never touches the edges.
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .navigationBarsPadding()
-                                            .padding(horizontal = 20.dp, vertical = 14.dp),
+                                            .padding(horizontal = 24.dp, vertical = 14.dp),
                                         contentAlignment = Alignment.BottomCenter
                                     ) {
-                                        NavigationBar(
-                                            modifier = Modifier
-                                                .wrapContentWidth()
-                                                .testTag("app_bottom_bar")
-                                                .shadow(
-                                                    elevation = 3.dp,
-                                                    shape = RoundedCornerShape(24.dp),
-                                                    ambientColor = Color.Black,
-                                                    spotColor = Color.Black
-                                                )
-                                                .clip(RoundedCornerShape(24.dp))
-                                                .border(
-                                                    BorderStroke(
-                                                        1.dp,
-                                                        if (isDarkTheme) Color(0x1BFFFFFF)
-                                                        else Color(0x0E000000)
-                                                    ),
-                                                    RoundedCornerShape(24.dp)
-                                                ),
-                                            containerColor = if (isDarkTheme) {
-                                                Color(0xFF0C101A)
-                                            } else {
-                                                Color(0xFFFFFFFF)
+                                        com.example.ui.components.LiquidGlassNavBar(
+                                            tabs = glassTabs,
+                                            selectedIndex = currentTab.ordinal,
+                                            onTabSelected = { index ->
+                                                currentTab = AppTab.entries[index]
                                             },
-                                            tonalElevation = 0.dp,
-                                            windowInsets = WindowInsets(0, 0, 0, 0)
-                                        ) {
-                                            NavigationBarItem(
-                                                selected = currentTab == AppTab.Dashboard,
-                                                onClick = { currentTab = AppTab.Dashboard },
-                                                icon = {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Terrain,
-                                                        contentDescription = "خانه",
-                                                        modifier = Modifier.size(22.dp)
-                                                    )
-                                                },
-                                                label = {
-                                                    Text(
-                                                        text = "خانه",
-                                                        fontSize = 11.sp,
-                                                        fontWeight = if (currentTab == AppTab.Dashboard) FontWeight.Bold else FontWeight.Medium,
-                                                        fontFamily = Vazirmatn
-                                                    )
-                                                },
-                                                colors = NavigationBarItemDefaults.colors(
-                                                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                                ),
-                                                modifier = Modifier.testTag("nav_item_dashboard")
-                                            )
-
-                                            NavigationBarItem(
-                                                selected = currentTab == AppTab.Search,
-                                                onClick = { currentTab = AppTab.Search },
-                                                icon = {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Search,
-                                                        contentDescription = "قله‌ها",
-                                                        modifier = Modifier.size(22.dp)
-                                                    )
-                                                },
-                                                label = {
-                                                    Text(
-                                                        text = "قله‌ها",
-                                                        fontSize = 11.sp,
-                                                        fontWeight = if (currentTab == AppTab.Search) FontWeight.Bold else FontWeight.Medium,
-                                                        fontFamily = Vazirmatn
-                                                    )
-                                                },
-                                                colors = NavigationBarItemDefaults.colors(
-                                                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                                ),
-                                                modifier = Modifier.testTag("nav_item_search")
-                                            )
-
-                                            NavigationBarItem(
-                                                selected = currentTab == AppTab.Settings,
-                                                onClick = { currentTab = AppTab.Settings },
-                                                icon = {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Settings,
-                                                        contentDescription = "تنظیمات",
-                                                        modifier = Modifier.size(22.dp)
-                                                    )
-                                                },
-                                                label = {
-                                                    Text(
-                                                        text = "تنظیمات",
-                                                        fontSize = 11.sp,
-                                                        fontWeight = if (currentTab == AppTab.Settings) FontWeight.Bold else FontWeight.Medium,
-                                                        fontFamily = Vazirmatn
-                                                    )
-                                                },
-                                                colors = NavigationBarItemDefaults.colors(
-                                                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                                ),
-                                                modifier = Modifier.testTag("nav_item_settings")
-                                            )
-                                        }
+                                            state = glassState,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("app_bottom_bar"),
+                                        )
                                     }
                                 }
                             }
                         ) { innerPadding ->
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(
-                                        top = innerPadding.calculateTopPadding(),
-                                        bottom = 0.dp
-                                    )
-                                    .background(MaterialTheme.colorScheme.background)
+                            // Records the content into a GraphicsLayer so the glass
+                            // bar can blur the exact pixels behind itself (Full tier).
+                            com.example.ui.components.GlassBackdropSource(
+                                state = glassState,
+                                modifier = Modifier.fillMaxSize(),
                             ) {
-                                when (currentTab) {
-                                    AppTab.Dashboard -> {
-                                        HomeScreen(
-                                            viewModel = viewModel,
-                                            onSearchClick = { currentTab = AppTab.Search },
-                                            modifier = Modifier.fillMaxSize()
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(
+                                            top = innerPadding.calculateTopPadding(),
+                                            bottom = 0.dp
                                         )
-                                    }
-                                    AppTab.Search -> {
-                                        SearchScreen(
-                                            viewModel = viewModel,
-                                            onMountainSelected = { mountain ->
-                                                viewModel.selectMountain(mountain)
-                                                currentTab = AppTab.Dashboard
-                                            },
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    }
-                                    AppTab.Settings -> {
-                                        SettingsScreen(
-                                            viewModel = viewModel,
-                                            onBackClick = { currentTab = AppTab.Dashboard },
-                                            modifier = Modifier.fillMaxSize()
-                                        )
+                                        .background(MaterialTheme.colorScheme.background)
+                                ) {
+                                    when (currentTab) {
+                                        AppTab.Dashboard -> {
+                                            HomeScreen(
+                                                viewModel = viewModel,
+                                                onSearchClick = { currentTab = AppTab.Search },
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        }
+                                        AppTab.Search -> {
+                                            SearchScreen(
+                                                viewModel = viewModel,
+                                                onMountainSelected = { mountain ->
+                                                    viewModel.selectMountain(mountain)
+                                                    currentTab = AppTab.Dashboard
+                                                },
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        }
+                                        AppTab.Settings -> {
+                                            SettingsScreen(
+                                                viewModel = viewModel,
+                                                onBackClick = { currentTab = AppTab.Dashboard },
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        }
                                     }
                                 }
                             }
