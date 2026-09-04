@@ -236,11 +236,17 @@ fun LiquidGlassNavBar(
     // is a property of that layer (not set/reset around each draw op), the blur
     // survives every display-list replay and keeps diffusing the scrolling
     // content behind the bar, so background text never collides with the labels.
+    //
+    // Tile mode: DECAL (not CLAMP). DECAL is the correct edge treatment for a
+    // backdrop blur — samples outside the layer raster fade to transparency
+    // instead of stretching the edge pixels, which removes the subtle streak
+    // artifacts CLAMP produces at the curved tips of the capsule. DECAL exists
+    // since API 31 (same level this Full-tier path already requires).
     val density = LocalDensity.current
     val blurChain: androidx.compose.ui.graphics.RenderEffect? = remember(state.tier, density) {
         if (state.tier == GlassTier.Full && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val blurPx = with(density) { 24.dp.toPx() }
-            val blurEffect = RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP)
+            val blurEffect = RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.DECAL)
             // Android has no createColorMatrixEffect — the saturation boost goes
             // through ColorMatrixColorFilter instead.
             val saturationFilter = android.graphics.ColorMatrixColorFilter(
