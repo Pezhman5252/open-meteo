@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -42,20 +41,20 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -73,11 +72,18 @@ import com.example.ui.theme.isDark
  *  (io.github.nadeemiqbal:liquid-glass 0.2.3) with official androidx APIs:
  *
  *  • The content BEHIND the bar is recorded into a [GraphicsLayer]
- *    (see [GlassBackdropSource]) and the bar redraws it through a
- *    RenderEffect chain — blur(24dp) → saturation(1.4x) — clipped to the
+ *    (see [GlassBackdropSource]) and the glass surface re-draws it through
+ *    a RenderEffect chain — blur(24dp) → saturation(1.4x) — clipped to the
  *    capsule shape. That chain is the library's "Full" tier recipe.
- *  • On top: theme-aware frosted veil, specular sheen (iOS-style light
- *    catch), hairline border, and the animated tab slider pill.
+ *  • IMPORTANT: the blur is applied as a PERSISTENT RenderEffect on the glass
+ *    surface's own layer via `Modifier.graphicsLayer { renderEffect = … }`.
+ *    A previous attempt used the set→draw→reset dance on the backdrop layer;
+ *    that loses the effect on every display-list REPLAY (RenderNode reads its
+ *    properties at replay time), so the backdrop showed through SHARP and
+ *    mixed with the tab labels. Keeping the effect as a permanent property of
+ *    the glass layer makes the blur survive every replay.
+ *  • On top of the blurred body: a sharp specular sheen, hairline border, and
+ *    the animated tab slider pill (drawn in a separate, un-blurred layer).
  *  • Auto-tiering (mirrors LiquidGlassQuality.android.kt):
  *      – Full:     Android 12 (API 31)+ on non-low-RAM devices.
  *      – Fallback: older / low-RAM devices → no GraphicsLayer recording,
@@ -207,6 +213,28 @@ fun LiquidGlassNavBar(
         )
     }
 
+    // ─── Blur chain: blur(24dp) → saturation(1.4x), built once (Full tier only) ───
+    // Applied as a PERSISTENT RenderEffect on the glass layer below. Because it
+    // is a property of that layer (not set/reset around each draw op), the blur
+    // survives every display-list replay and keeps diffusing the scrolling
+    // content behind the bar, so background text never collides with the labels.
+    val density = LocalDensity.current
+    val blurChain: androidx.compose.ui.graphics.RenderEffect? = remember(state.tier, density) {
+        if (state.tier == GlassTier.Full && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val blurPx = with(density) { 24.dp.toPx() }
+            val blurEffect = RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP)
+            // Android has no createColorMatrixEffect — the saturation boost goes
+            // through ColorMatrixColorFilter instead.
+            val saturationFilter = android.graphics.ColorMatrixColorFilter(
+                android.graphics.ColorMatrix(saturationMatrix(1.4f))
+            )
+            val saturationEffect = RenderEffect.createColorFilterEffect(saturationFilter)
+            RenderEffect.createChainEffect(saturationEffect, blurEffect).asComposeRenderEffect()
+        } else {
+            null
+        }
+    }
+
     // ─── Slider animation (iOS spring-like glide) ───
     val sliderPosition = remember { Animatable(selectedIndex.toFloat()) }
     LaunchedEffect(selectedIndex, tabs.size) {
@@ -239,55 +267,49 @@ fun LiquidGlassNavBar(
             .height(barHeight)
             .shadow(elevation = 10.dp, shape = capsuleShape, clip = false),
     ) {
-        // ── Glass surface: backdrop-blur + veil + sheen + border ──
+        // ── Glass BODY: blurred backdrop + frosted veil ──
+        // The whole node is wrapped in a graphicsLayer carrying the blur
+        // RenderEffect, so EVERYTHING this node draws — the translated backdrop
+        // AND the veil — is composited blurred, on every replay. `.clip` sits
+        // OUTSIDE the blur layer so the smeared output is cut to the capsule.
         val barOrigin = remember { androidx.compose.runtime.mutableStateOf(Offset.Zero) }
         Box(
             Modifier
                 .matchParentSize()
                 .onGloballyPositioned { barOrigin.value = it.positionInRoot() }
+                .clip(capsuleShape)
+                .graphicsLayer { renderEffect = blurChain }
                 .drawWithCache {
-                    val w = size.width
-                    val h = size.height
-                    val radius = h / 2f
-                    val capsule = Path().apply {
-                        addRoundRect(RoundRect(0f, 0f, w, h, CornerRadius(radius, radius)))
-                    }
-                    // Blur→saturation chain built once per size (Full tier only).
-                    val blurChain: androidx.compose.ui.graphics.RenderEffect? =
-                        if (state.tier == GlassTier.Full && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            val blurPx = 24.dp.toPx()
-                            val blurEffect = RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP)
-                            // Android has no createColorMatrixEffect — the saturation
-                            // boost goes through ColorMatrixColorFilter instead.
-                            val saturationFilter = android.graphics.ColorMatrixColorFilter(
-                                android.graphics.ColorMatrix(saturationMatrix(1.4f))
-                            )
-                            val saturationEffect = RenderEffect.createColorFilterEffect(saturationFilter)
-                            RenderEffect.createChainEffect(saturationEffect, blurEffect).asComposeRenderEffect()
-                        } else {
-                            null
-                        }
+                    val radius = size.height / 2f
                     onDrawWithContent {
                         val backdrop = state.backdrop
-                        if (blurChain != null && backdrop != null) {
-                            clipPath(capsule) {
-                                // Shift the recorded backdrop so the pixels that sit
-                                // directly behind the bar land inside the capsule.
-                                translate(
-                                    left = state.backdropOriginX - barOrigin.value.x,
-                                    top = state.backdropOriginY - barOrigin.value.y,
-                                ) {
-                                    backdrop.renderEffect = blurChain
-                                    drawLayer(backdrop)
-                                    backdrop.renderEffect = null
-                                }
+                        if (backdrop != null) {
+                            // Shift the recorded backdrop so the pixels that sit
+                            // directly behind the bar land inside the capsule.
+                            translate(
+                                left = state.backdropOriginX - barOrigin.value.x,
+                                top = state.backdropOriginY - barOrigin.value.y,
+                            ) {
+                                drawLayer(backdrop)
                             }
                         }
-                        drawRoundRect(veilColor.copy(alpha = veilAlpha), cornerRadius = CornerRadius(radius, radius))
-                        drawRoundRect(brush = sheenBrush, cornerRadius = CornerRadius(radius, radius))
+                        drawRoundRect(veilColor.copy(alpha = veilAlpha), cornerRadius = CornerRadius(radius))
+                    }
+                },
+        )
+
+        // ── Glass DETAILS: specular sheen + hairline border (drawn SHARP,
+        //    above the blurred body, so the glass keeps its crisp edges) ──
+        Box(
+            Modifier
+                .matchParentSize()
+                .drawWithCache {
+                    val radius = size.height / 2f
+                    onDrawWithContent {
+                        drawRoundRect(brush = sheenBrush, cornerRadius = CornerRadius(radius))
                         drawRoundRect(
                             color = borderColor,
-                            cornerRadius = CornerRadius(radius, radius),
+                            cornerRadius = CornerRadius(radius),
                             style = Stroke(width = 1.5f),
                         )
                         drawContent()
