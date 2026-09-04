@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
@@ -109,6 +110,11 @@ class LiquidGlassState internal constructor(val tier: GlassTier) {
     internal var backdrop: androidx.compose.ui.graphics.layer.GraphicsLayer? = null
     internal var backdropOriginX: Float = 0f
     internal var backdropOriginY: Float = 0f
+
+    /** Number of glass surfaces currently composed. While it is 0 (bar scrolled
+     *  away / removed) the full-screen backdrop recording is SKIPPED so scrolling
+     *  pays zero glass cost until the bar comes back. */
+    internal var consumerCount: Int = 0
 }
 
 /** Probe the tier once per device; cheap and stable for the app lifetime. */
@@ -147,10 +153,13 @@ fun GlassBackdropSource(
                 state.backdropOriginY = pos.y
             }
             .drawWithContent {
-                if (state.tier == GlassTier.Full) {
+                if (state.tier == GlassTier.Full && state.consumerCount > 0) {
                     layer.record { this@drawWithContent.drawContent() }
                     drawLayer(layer)
                 } else {
+                    // No glass surface is on screen (bar hidden/removed) or the
+                    // device is on the Fallback tier: draw straight to the
+                    // display — identical pixels, zero recording/layer cost.
                     drawContent()
                 }
             },
@@ -187,6 +196,15 @@ fun LiquidGlassNavBar(
 ) {
     val isDark = MaterialTheme.colorScheme.background.isDark
     val capsuleShape = RoundedCornerShape(percent = 50)
+
+    // Register this glass surface while it is composed. The backdrop source
+    // records the content behind the bar ONLY while at least one consumer
+    // exists — so a bar that is hidden (scrolled away / removed) never forces
+    // a full-screen GraphicsLayer re-record during scrolling.
+    DisposableEffect(state) {
+        state.consumerCount++
+        onDispose { state.consumerCount-- }
+    }
 
     // ─── Theme-aware palette (mirrors LiquidGlassDefaults.tintFor) ───
     val veilColor = if (isDark) Color(0xFF0B1220) else Color(0xFFFFFFFF)
