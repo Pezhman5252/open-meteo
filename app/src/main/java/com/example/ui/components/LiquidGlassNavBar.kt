@@ -237,11 +237,38 @@ fun LiquidGlassNavBar(
     // survives every display-list replay and keeps diffusing the scrolling
     // content behind the bar, so background text never collides with the labels.
     //
-    // Tile mode: DECAL (not CLAMP). DECAL is the correct edge treatment for a
-    // backdrop blur — samples outside the layer raster fade to transparency
-    // instead of stretching the edge pixels, which removes the subtle streak
-    // artifacts CLAMP produces at the curved tips of the capsule. DECAL exists
-    // since API 31 (same level this Full-tier path already requires).
+    // ─── Edge treatment (3rd arg of createBlurEffect) — Shader.TileMode ───
+    // The blur kernel always reads a few pixels OUTSIDE the glass layer's
+    // raster near the borders. This parameter decides what those out-of-bounds
+    // samples return:
+    //
+    //   CLAMP  (default of the 2-arg createBlurEffect overload)
+    //          Extends the outermost edge pixels infinitely outward. Output
+    //          stays fully opaque at the borders, but high-contrast content at
+    //          the edges smears into visible streaks — the wrong look for a
+    //          floating glass capsule sitting over scrolling content.
+    //
+    //   DECAL  ← CURRENT CHOICE
+    //          Treats outside samples as transparent. The blur fades naturally
+    //          at the borders instead of streaking. This is the standard edge
+    //          treatment for backdrop/behind-blur (frosted glass), because the
+    //          real content continues beyond the blurred region anyway. Any
+    //          slight transparency at the extreme borders is covered by the
+    //          veil + capsule clip drawn on top.
+    //
+    //   REPEAT
+    //          Tiles the whole source repeatedly outward — ghost copies of the
+    //          content appear near the edges. Only useful for seamless
+    //          textures/patterns, never for glass.
+    //
+    //   MIRROR
+    //          Mirrors the content outward — avoids hard streaks but shows
+    //          reflected ghosting of the content. Rarely desirable here.
+    //
+    // All four modes exist since API 31 — the same level this Full-tier path
+    // already requires (see the SDK_INT guard below), so switching between
+    // them is always safe here. If you ever switch back to CLAMP, re-check the
+    // capsule's curved tips for edge streaks (e.g. with a screenshot probe).
     val density = LocalDensity.current
     val blurChain: androidx.compose.ui.graphics.RenderEffect? = remember(state.tier, density) {
         if (state.tier == GlassTier.Full && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
