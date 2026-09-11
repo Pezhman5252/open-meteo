@@ -240,6 +240,25 @@ object MountaineeringHelper {
         return referenceWind * ratio.pow(effectiveAlpha)
     }
 
+    /**
+     * اعمال قانون توان باد بین دو تراز ارتفاعی مطلق، با تفسیر صحیح «ارتفاع از سطح زمین»:
+     * باد اندازه‌گیری‌شده (۱۰ یا ۸۰ متر بالای سطح مدل در تراز مرجع) به‌صورت نسبی به تراز هدف
+     * منتقل می‌شود (z_target = z_ref + Δ). چون قانون توان Hellmann فقط در لایه سطحی جو
+     * (تا حدود ~۱۰۰ متر) معتبر است، نسبت نهایی به بازه تجربی ۰.۶ تا ۱.۸ (باد دامنه تا قله،
+     * مطابق ادبیات هواشناسی کوهستان) مهار می‌شود تا اکسترپولاسیون غیرواقعی رخ ندهد.
+     */
+    private fun adjustWindBetweenElevations(
+        referenceWind: Double,
+        referenceHeightAboveSurfaceM: Double,
+        deltaElevationM: Double,
+        alpha: Double
+    ): Double {
+        if (referenceWind <= 0.0) return referenceWind
+        val zTarget = (referenceHeightAboveSurfaceM + deltaElevationM).coerceAtLeast(2.0)
+        val ratio = (zTarget / referenceHeightAboveSurfaceM).pow(alpha).coerceIn(0.6, 1.8)
+        return referenceWind * ratio
+    }
+
     // ۱.۳ تصحیح رطوبت نسبی با ارتفاع (Mixing Ratio)
     fun adjustHumidityWithAltitude(
         baseHumidity: Double,
@@ -440,10 +459,10 @@ object MountaineeringHelper {
         }
 
         // ۴. سطح ۲ (Fallback): استفاده از تابش موج کوتاه ساعتی در صورت عدم دسترسی به داده روزانه (W/m²)
-        // ضریب تبدیل: UVI ≈ 0.004 × GHI (W/m²) برای آسمان صاف، یعنی UVI ≈ GHI / 250
+        // ضریب تبدیل تجربی متعارف: UVI ≈ 0.010 × GHI (W/m²) برای آسمان صاف، یعنی UVI ≈ GHI / 100
         val swRad = if (targetIdx != null && targetIdx >= 0) hourly?.shortwaveRadiation?.getOrNull(targetIdx) else null
         if (swRad != null && swRad > 0.0) {
-            var uv = swRad / 250.0
+            var uv = swRad / 100.0
 
             // ضریب ارتفاع اضافی نسبت به ارتفاع مرجع
             val diffElev = (altitude - mountainAltitude).coerceAtLeast(0)
@@ -473,17 +492,24 @@ object MountaineeringHelper {
         val diff = mountainAltitude - targetAltitude
         val tempAtStep = cur.temperature2m + (diff * 0.0065)
 
-        val estWind80mAtStep = adjustWindWithAltitude(
+        // قانون توان باد با ارتفاع نسبی از سطح محلی (نه ارتفاع مطلق MSL) و مهار تجربی ۰.۶ تا ۱.۸
+        val deltaElevM = (targetAltitude - mountainAltitude).toDouble()
+        val windAlpha = when {
+            maxOf(mountainAltitude, targetAltitude) >= 3000 -> 0.25
+            maxOf(mountainAltitude, targetAltitude) >= 1500 -> 0.20
+            else -> 0.15
+        }
+        val estWind80mAtStep = adjustWindBetweenElevations(
             referenceWind = cur.windSpeed80m ?: cur.windSpeed10m ?: 0.0,
-            referenceElevation = mountainAltitude.toDouble(),
-            targetAltitude = targetAltitude.toDouble(),
-            alpha = null
+            referenceHeightAboveSurfaceM = 80.0,
+            deltaElevationM = deltaElevM,
+            alpha = windAlpha
         )
-        val adjWind10mAtStep = adjustWindWithAltitude(
+        val adjWind10mAtStep = adjustWindBetweenElevations(
             referenceWind = cur.windSpeed10m ?: 0.0,
-            referenceElevation = mountainAltitude.toDouble(),
-            targetAltitude = targetAltitude.toDouble(),
-            alpha = null
+            referenceHeightAboveSurfaceM = 10.0,
+            deltaElevationM = deltaElevM,
+            alpha = windAlpha
         )
         val estApparentAtStep = cur.apparentTemperature?.let { it + (diff * 0.0065) } ?: calculateWindChill(tempAtStep, estWind80mAtStep)
 
@@ -507,11 +533,11 @@ object MountaineeringHelper {
         val adjDewPoint = calculateDewPoint(tempAtStep, adjHumidity)
 
         val baseWindGusts = cur.windGusts10m ?: ((cur.windSpeed10m ?: 0.0) * calculateDynamicGustFactor(cur.cape))
-        val adjWindGusts = adjustWindWithAltitude(
+        val adjWindGusts = adjustWindBetweenElevations(
             referenceWind = baseWindGusts,
-            referenceElevation = mountainAltitude.toDouble(),
-            targetAltitude = targetAltitude.toDouble(),
-            alpha = null
+            referenceHeightAboveSurfaceM = 80.0,
+            deltaElevationM = deltaElevM,
+            alpha = windAlpha
         )
 
         val offsetHours = AstronomicalCalculator.getStandardTimezoneOffset(mountainName, lat, lon)
@@ -830,17 +856,17 @@ object MountaineeringHelper {
         return risk.coerceIn(0, 100)
     }
 
-    // ۲.۴ ریسک سرمازدگی (Frostbite Risk Index - NWS/NOAA)
+    // ۲.۴ ریسک سرمازدگی (Frostbite Risk Index - نوارهای زمانی نمودار رسمی NWS Wind Chill)
     fun calculateFrostbiteRisk(temp: Double, windSpeed: Double, isNight: Boolean = false): Int {
         val windChill = calculateWindChill(temp, windSpeed, isNight)
         return if (windChill > -10.0) {
             0
-        } else if (windChill <= -48.0) {
-            100 // کمتر از ۵ دقیقه
-        } else if (windChill <= -40.0) {
-            90  // ۵ تا ۱۰ دقیقه
-        } else if (windChill <= -28.0) {
-            75  // ۱۰ تا ۳۰ دقیقه
+        } else if (windChill <= -44.4) {
+            100 // کمتر از ۵ دقیقه (NWS: −۴۴.۴°C / −۴۸°F و سردتر)
+        } else if (windChill <= -35.6) {
+            90  // ۵ تا ۱۰ دقیقه (NWS: −۳۵.۶°C / −۳۲°F و سردتر)
+        } else if (windChill <= -27.8) {
+            75  // ۱۰ تا ۳۰ دقیقه (NWS: −۲۷.۸°C / −۱۸°F و سردتر)
         } else if (windChill <= -20.0) {
             40  // بیش از ۳۰ دقیقه
         } else {
@@ -850,9 +876,9 @@ object MountaineeringHelper {
 
     fun getFrostbiteWindowText(windChill: Double): String? {
         return when {
-            windChill <= -48.0 -> "خطر سرمازدگی پوست مکشوف در کمتر از ۵ دقیقه"
-            windChill <= -40.0 -> "زمان تا سرمازدگی پوست مکشوف: ۵ تا ۱۰ دقیقه"
-            windChill <= -28.0 -> "زمان تا سرمازدگی پوست مکشوف: ۱۰ تا ۳۰ دقیقه"
+            windChill <= -44.4 -> "خطر سرمازدگی پوست مکشوف در کمتر از ۵ دقیقه"
+            windChill <= -35.6 -> "زمان تا سرمازدگی پوست مکشوف: ۵ تا ۱۰ دقیقه"
+            windChill <= -27.8 -> "زمان تا سرمازدگی پوست مکشوف: ۱۰ تا ۳۰ دقیقه"
             windChill <= -20.0 -> "هشدار سرمازدگی در تماس مداوم باد (۳۰+ دقیقه)"
             else -> null
         }
@@ -1316,7 +1342,7 @@ object MountaineeringHelper {
         } else {
             current.isDay == 0
         }
-        val frostbiteRisk = calculateFrostbiteRisk(safeTempC, safeWind80m, isNight = isNightCurrent)
+        val frostbiteRisk = calculateFrostbiteRisk(safeTempC, safeWind10m, isNight = isNightCurrent)
 
         val isSnowPresent = safeSnowfallCm > 0.0 || snowDepth > 0.0 || (safePrecipMm > 0.0 && safeTempC <= 0.5)
         val rawUv = calculateResolvedUvIndex(
@@ -1336,7 +1362,8 @@ object MountaineeringHelper {
         val wetBulbVal = wetBulbTemp(safeTempC, relativeHumidity)
         val estimatedDewPoint = safeDewPointC
         val humidexVal = humidex(safeTempC, estimatedDewPoint)
-        val windChillVal = calculateWindChill(safeTempC, safeWind80m)
+        // فرمول استاندارد NWS برای سرمایش باد، باد ارتفاع ۱۰ متر را تعریف می‌کند (نه ۸۰ متر)
+        val windChillVal = calculateWindChill(safeTempC, safeWind10m)
         val frostbiteMinutesVal = frostbiteTimeMinutes(windChillVal)
 
         val esc = calculateEscapeStrategy(
@@ -2146,10 +2173,11 @@ object MountaineeringHelper {
             }
             
             val lightningTrend = if (hasExplicitLp && lpNow != null && lpNext != null) {
+                // داده صریح J/kg است؛ آستانه‌های روند بر حسب J/kg (۱۰/۱۰). شاخه سنتزشده مقیاس ۰..۱ دارد (۰.۱).
                 val lpDiff = lpNext - lpNow
                 when {
-                    lpDiff > 0.1 -> "روند افزایشی صاعقه"
-                    lpDiff < -0.1 -> "روند کاهشی صاعقه"
+                    lpDiff > 10.0 -> "روند افزایشی صاعقه"
+                    lpDiff < -10.0 -> "روند کاهشی صاعقه"
                     else -> "پایدار"
                 }
             } else {
@@ -2178,11 +2206,21 @@ object MountaineeringHelper {
             }
             
             // 5. Peak-Sensitive Instantaneous Risk Level Evaluation across upcoming 4 slots (1 hour)
+            // توجه: lightning_potential در Open-Meteo بر حسب J/kg است؛ آستانه‌های جزیی (>0.02..>0.7)
+            // فقط برای شاخه سنتزشده با مقیاس ۰..۱ معتبرند. برای داده صریح API از آستانه‌های J/kg استفاده می‌شود.
             val maxCapeFuture = minutely15.cape?.drop(activeIdx)?.take(4)?.filterNotNull()?.maxOrNull() ?: capeNow
-            val maxLpFuture = if (hasExplicitLp) {
-                minutely15.lightningPotential?.drop(activeIdx)?.take(4)?.filterNotNull()?.maxOrNull() ?: (lpNow ?: 0.0)
+            val maxWcFuture = minutely15.weatherCode?.drop(activeIdx)?.take(4)?.filterNotNull()?.maxOrNull() ?: wCodeNow
+            val maxLpFuture: Double = if (hasExplicitLp) {
+                // مقیاس J/kg (استاندارد Open-Meteo): ۱۰ J/kg شروع فعالیت رعدوبرق، ~۵۰ قابل توجه، ~۱۵۰ شدید
+                val lpMax = minutely15.lightningPotential?.drop(activeIdx)?.take(4)?.filterNotNull()?.maxOrNull() ?: (lpNow ?: 0.0)
+                when {
+                    lpMax >= 150.0 -> 0.80
+                    lpMax >= 50.0 -> 0.50
+                    lpMax >= 10.0 -> 0.25
+                    lpMax > 0.0 -> 0.05
+                    else -> 0.0
+                }
             } else {
-                val maxWcFuture = minutely15.weatherCode?.drop(activeIdx)?.take(4)?.filterNotNull()?.maxOrNull() ?: wCodeNow
                 when {
                     maxWcFuture in listOf(95, 96, 99) -> 0.80
                     maxCapeFuture > 1000.0 -> 0.65
@@ -2393,9 +2431,12 @@ object MountaineeringHelper {
     // ============================================================
 
     // دمای مرطوب (Wet Bulb) به فرمول Stull با اعتبارسنجی ورودی‌ها
+    // توجه: فرمول Stull (2011) برای RH بین ۵ تا ۱۰۰ درصد و T بین -۲۰ تا +۵۰ درجه برازش شده است؛
+    // RH زیر ۵٪ به ۵٪ کلمپ می‌شود تا خارج از بازه برازش محاسبه نشود. دما محدوده وسیع‌تری می‌پذیرد
+    // چون فرمول در سرمای شدید کوهستان نیز رفتار پیوسته و معقول دارد (Tw → T با کاهش RH).
     fun wetBulbTemp(tempC: Double, humidityPct: Double?): Double {
         val sTemp = sanitizeTemperature(tempC)
-        val sHum = sanitizeHumidity(humidityPct).coerceIn(0.0, 100.0)
+        val sHum = sanitizeHumidity(humidityPct).coerceIn(5.0, 100.0)
         val tw = sTemp * atan(0.151977 * sqrt(sHum + 8.313659)) +
                 atan(sTemp + sHum) -
                 atan(sHum - 1.676331) +
@@ -2425,13 +2466,14 @@ object MountaineeringHelper {
         }
     }
 
-    // زمان تقریبی یخ‌زدگی بافت پوست در اثر سوزباد (بر اساس استاندارد سازمان هواشناسی ملی آمریکا NWS و WMO)
+    // زمان تقریبی یخ‌زدگی بافت پوست در اثر سوزباد (بر اساس نمودار رسمی NWS Wind Chill Chart)
+    // NWS: سوزباد −۲۷.۸°C → ۳۰ دقیقه | −۳۵.۶°C → ۱۰ دقیقه | −۴۴.۴°C → ۵ دقیقه
     fun frostbiteTimeMinutes(windChill: Double): Int? {
         return when {
-            windChill > -27.0 -> null // خطر یخ‌زدگی سریع پوست زیر ۳۰ دقیقه در سوزباد بالای -۲۷ درجه وجود ندارد
-            windChill > -39.0 -> 30   // ۳۰ دقیقه در سوزباد -۲۷ تا -۳۹ درجه سانتی‌گراد
-            windChill > -54.0 -> 10   // ۱۰ دقیقه در سوزباد -۴۰ تا -۵۴ درجه سانتی‌گراد
-            windChill > -65.0 -> 5    // ۵ دقیقه در سوزباد -۵۵ تا -۶۴ درجه سانتی‌گراد
+            windChill > -27.8 -> null // خطر یخ‌زدگی سریع پوست زیر ۳۰ دقیقه در سوزباد بالای -۲۷.۸ درجه وجود ندارد
+            windChill > -35.6 -> 30   // ۳۰ دقیقه در سوزباد -۲۷.۸ تا -۳۵.۶ درجه سانتی‌گراد
+            windChill > -44.4 -> 10   // ۱۰ دقیقه در سوزباد -۳۵.۶ تا -۴۴.۴ درجه سانتی‌گراد
+            windChill > -65.0 -> 5    // ۵ دقیقه در سوزباد -۴۴.۴ تا -۶۵ درجه سانتی‌گراد
             else -> 2                 // کمتر از ۲ دقیقه در سوزبادهای قطبی کمتر از -۶۵ درجه
         }
     }
@@ -2512,12 +2554,13 @@ object MountaineeringHelper {
             val checkLimit = min(4, minutelyPrecip.size)
             for (k in 0 until checkLimit) {
                 val mCape = minutely15.cape?.getOrNull(k) ?: 0.0
+                // lightning_potential بر حسب J/kg است؛ آستانه ۸ J/kg معادل شروع فعالیت الکتریکی قابل توجه
                 val mLight = minutely15.lightningPotential?.getOrNull(k) ?: 0.0
                 val mWind = minutely15.windGusts10m?.getOrNull(k) ?: minutely15.windSpeed10m?.getOrNull(k) ?: 0.0
                 val mPrecip = minutelyPrecip.getOrNull(k) ?: 0.0
                 val mProb = 0 // Removed from 15min data
 
-                if (mCape > 400.0 || mLight > 0.08 || mWind > 45.0 || mPrecip > 2.0 || mProb >= 70) {
+                if (mCape > 400.0 || mLight > 8.0 || mWind > 45.0 || mPrecip > 2.0 || mProb >= 70) {
                     val offsetMins = (k + 1) * 15
                     if (earliestImpactMin == null || offsetMins < earliestImpactMin) {
                         earliestImpactMin = offsetMins

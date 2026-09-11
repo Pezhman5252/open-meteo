@@ -11,10 +11,10 @@ import kotlin.math.*
  *   - Meeus Astronomical Algorithms (Moon position, phase, rise/set)
  *   - Standard Refraction & Dip correction for high-altitude peaks
  *
- * Accuracy:
- *   - Sun rise/set: ± 2 seconds
- *   - Moon rise/set: ± 1 minute
- *   - Moon phase: ± 0.5%
+ * Accuracy (realistic bounds for the algorithms used):
+ *   - Sun rise/set: ~± 1 minute (NOAA/Spencer low-precision method)
+ *   - Moon rise/set: ~± 2–5 minutes (truncated Meeus/ELP series)
+ *   - Moon phase/illumination: ~± 1% (mean synodic phase model)
  *   - Suitable for professional mountaineering & expedition planning
  */
 object AstronomicalCalculator {
@@ -554,8 +554,13 @@ object AstronomicalCalculator {
     fun formatFractionalHour(hourFraction: Double?): String {
         if (hourFraction == null) return "--:--"
         val normalized = normalizeHour(hourFraction)
-        val h = normalized.toInt()
-        val m = round((normalized - h) * 60.0).toInt() % 60
+        var h = floor(normalized).toInt()
+        // گرد کردن دقیقه‌ها می‌تواند به ۶۰ برسد؛ ساعت باید حمل (carry) شود (23:59.7 → 00:00 نه 23:00)
+        var m = round((normalized - floor(normalized)) * 60.0).toInt()
+        if (m >= 60) {
+            m -= 60
+            h = (h + 1) % 24
+        }
         return String.format(Locale.US, "%02d:%02d", h, m)
     }
 }

@@ -3,10 +3,12 @@ package com.example
 import com.example.data.remote.CurrentWeather
 import com.example.data.remote.DailyData
 import com.example.data.remote.HourlyData
+import com.example.data.remote.Minutely15Data
 import com.example.data.remote.WeatherUnits
 import com.example.ui.util.MountaineeringHelper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -86,6 +88,54 @@ class MountaineeringSafetyLogicTest {
             lightningPotential = null
         )
         assertTrue("Dry lightning scenario should produce significant risk (>= 40%)", dryLightningRisk >= 40)
+    }
+
+    @Test
+    fun testMinutely15Risk_lightningPotentialJkgScale_notFractionScale() {
+        // lightning_potential از Open-Meteo بر حسب J/kg است (واحد جرمی-انرژیکی).
+        // مقدار 25 J/kg فعالیت الکتریکی معنادار اما نه شدید است؛ با باگ قدیمی (>0.2 روی مقیاس ۰..۱)
+        // ریسک «بسیار بالا» می‌شد. با اصلاح: 25 J/kg فقط وارد باند «بالا/متوسط» می‌شود.
+        val minutely = Minutely15Data(
+            time = listOf("2026-08-15T12:00", "2026-08-15T12:15", "2026-08-15T12:30", "2026-08-15T12:45"),
+            precipitation = listOf(0.0, 0.0, 0.0, 0.0),
+            lightningPotential = listOf(25.0, 20.0, 15.0, 10.0),
+            cape = listOf(300.0, 300.0, 300.0, 300.0),
+            windSpeed10m = listOf(10.0, 10.0, 10.0, 10.0),
+            weatherCode = listOf(2, 2, 2, 2)
+        )
+        val report = MountaineeringHelper.evaluateSafety(
+            current = CurrentWeather(
+                time = "2026-08-15T12:00",
+                temperature2m = 5.0,
+                relativeHumidity2m = 60.0,
+                windSpeed10m = 10.0,
+                weatherCode = 2,
+                isDay = 1
+            ),
+            hourly = HourlyData(
+                time = listOf("2026-08-15T12:00")
+            ),
+            altitudeOverride = 4500,
+            hourIndexOverride = 0,
+            minutely15 = minutely,
+            latitude = 36.0,
+            longitude = 52.0
+        )
+        // 25 J/kg نباید به تنهایی ریسک صاعقه «بسیار بالا» (>=150 J/kg) تولید کند
+        assertTrue(
+            "LP=25 J/kg must not be classified as extreme lightning risk",
+            report.lightningRisk < 80
+        )
+    }
+
+    @Test
+    fun testFrostbiteTimeMinutes_NWSChartThresholds() {
+        // نمودار رسمی NWS: −۲۷.۸°C → ۳۰ دقیقه | −۳۵.۶°C → ۱۰ دقیقه | −۴۴.۴°C → ۵ دقیقه
+        assertNull("Above -27.8C there is no rapid frostbite risk", MountaineeringHelper.frostbiteTimeMinutes(-20.0))
+        assertEquals(30, MountaineeringHelper.frostbiteTimeMinutes(-30.0))
+        assertEquals(10, MountaineeringHelper.frostbiteTimeMinutes(-40.0))
+        assertEquals(5, MountaineeringHelper.frostbiteTimeMinutes(-50.0))
+        assertEquals(2, MountaineeringHelper.frostbiteTimeMinutes(-70.0))
     }
 
     @Test
@@ -416,18 +466,18 @@ class MountaineeringSafetyLogicTest {
         )
         assertEquals(0.0, uvHour5, 0.01)
 
-        // 06:00 Dawn (50 W/m² => 0.2 base with the standard UVI ≈ GHI/250 conversion)
-        // at 5670m (diffElev = 0 because altitude=mountainAltitude defaults) => ~0.2
+        // 06:00 Dawn (50 W/m² => 0.5 base with the standard UVI ≈ 0.010 × GHI conversion)
+        // at 5670m (diffElev = 0 because altitude=mountainAltitude defaults) => ~0.5
         val uvHour6 = MountaineeringHelper.calculateResolvedUvIndex(
             current = dayCurrent,
             hourly = hourlyWithSwRad,
             altitude = 5670,
             hourlyIndex = 1
         )
-        assertTrue(uvHour6 in 0.15..0.25)
+        assertTrue(uvHour6 in 0.45..0.55)
 
-        // 12:00 Noon Peak (780 W/m² => 3.12 base with UVI ≈ GHI/250) at 5670m (diffElev = 0)
-        // with snow (1.4x) => 3.12 * 1.4 ≈ 4.37
+        // 12:00 Noon Peak (780 W/m² => 7.8 base with UVI ≈ 0.010 × GHI) at 5670m (diffElev = 0)
+        // with snow (1.4x) => 7.8 * 1.4 ≈ 10.92
         val uvHour12WithSnow = MountaineeringHelper.calculateResolvedUvIndex(
             current = dayCurrent,
             hourly = hourlyWithSwRad,
@@ -435,7 +485,7 @@ class MountaineeringSafetyLogicTest {
             snowCover = true,
             hourlyIndex = 2
         )
-        assertTrue(uvHour12WithSnow in 4.0..4.7)
+        assertTrue(uvHour12WithSnow in 10.6..11.2)
 
         // 3. Fallback to daily max with diurnal curve
         val dailyWithUv = DailyData(
