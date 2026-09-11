@@ -17,3 +17,6 @@ local.properties
 .env
 debug.keystore
 .android-sdk
+.dsh/
+.kilo/
+.kilocode/

@@ -1089,6 +1089,7 @@ object MountaineeringHelper {
         current: CurrentWeather,
         hourly: HourlyData?,
         offsetHours: Double? = null,
+        utcOffsetSeconds: Int? = null,
         lat: Double? = null,
         lon: Double? = null,
         mountainName: String? = null
@@ -1108,10 +1109,17 @@ object MountaineeringHelper {
 
         // ۱. تلاش برای همگام‌سازی مستقیم با زمان واقعی سیستم و آفست منطقه زمانی کوهستان برای شیفت اتوماتیک
         try {
-            val calculatedOffset = if (lat != null && lon != null) {
-                AstronomicalCalculator.getStandardTimezoneOffset(mountainName ?: "", lat, lon)
-            } else {
-                3.5
+            // Open-Meteo skill §11: use the response's own utc_offset_seconds metadata
+            // rather than guessing the effective timezone. Priority: explicit
+            // caller-resolved offsetHours → API response metadata (utcOffsetSeconds)
+            // → name/coordinate table → device zone as the last resort.
+            // (The previous hardcoded +3.5 Iran guess has been removed.)
+            val calculatedOffset = when {
+                utcOffsetSeconds != null -> utcOffsetSeconds / 3600.0
+                lat != null && lon != null ->
+                    AstronomicalCalculator.getStandardTimezoneOffset(mountainName ?: "", lat, lon)
+                else -> java.time.ZoneId.systemDefault()
+                    .rules.getOffset(java.time.Instant.now()).totalSeconds / 3600.0
             }
             val finalOffset = offsetHours ?: calculatedOffset
             // زمان فعلی در UTC و اعمال آفست منطقه زمانی قله (از جمله آفست‌های کسری مانند ۳.۵+ ایران) با java.time
@@ -1146,9 +1154,13 @@ object MountaineeringHelper {
             val hourStr = current.time.substringAfter("T").substringBefore(":")
             hourStr.toInt()
         } catch (e: Exception) {
-            // Fallback به ساعت قله با استفاده از offset
+            // Fallback به ساعت قله با استفاده از offset — متادیتای API اولویت دارد،
+            // سپس منطقه زمانی دستگاه (بدون حدس هاردکد)
             try {
-                val finalOffset = offsetHours ?: 3.5
+                val finalOffset = offsetHours
+                    ?: utcOffsetSeconds?.let { it / 3600.0 }
+                    ?: (java.time.ZoneId.systemDefault()
+                        .rules.getOffset(java.time.Instant.now()).totalSeconds / 3600.0)
                 val utcNow = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
                 utcNow.plusSeconds((finalOffset * 3600.0).toLong()).hour
             } catch (e2: Exception) {

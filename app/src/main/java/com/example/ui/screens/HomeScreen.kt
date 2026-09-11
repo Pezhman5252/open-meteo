@@ -22,7 +22,10 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -2016,7 +2019,13 @@ fun MountainHeroCard(
         val cur = weather.current
         val windArr = hourly?.windSpeed10m
         if (cur != null && windArr != null && hourly.time.isNotEmpty()) {
-            val idx = MountaineeringHelper.findHourlyIndexForCurrent(current = cur, hourly = hourly)
+            // Open-Meteo skill §11/§19: prefer the response's own utc_offset_seconds
+            // metadata over any timezone guessing when resolving the hourly index.
+            val idx = MountaineeringHelper.findHourlyIndexForCurrent(
+                current = cur,
+                hourly = hourly,
+                utcOffsetSeconds = weather.utcOffsetSeconds
+            )
             if (idx in windArr.indices) (windArr.getOrNull(idx) ?: 0.0) else 0.0
         } else {
             0.0
@@ -3427,6 +3436,38 @@ fun MountainHeroCard(
                             fontWeight = FontWeight.Bold
                         )
                     }
+                }
+                // Open-Meteo skill §3: the response coordinates identify the center of the
+                // weather grid cell actually used for the forecast and can be a few km away
+                // from the requested coordinate. Show the offset so the user always knows
+                // how representative this forecast is of the exact peak location.
+                val gridCellLat = weather.latitude
+                val gridCellLon = weather.longitude
+                if (gridCellLat != null && gridCellLon != null) {
+                    val gridCellElevation = weather.elevation
+                    val requestedLat = mountain.latitude
+                    val requestedLon = mountain.longitude
+                    // در عرض‌های جغرافیایی متوسط، طول جغرافیایی روی سطح واقعی زمین
+                    // حدود cos(latitude) کوچک‌تر از عرض جغرافیایی اثر می‌گذارد.
+                    val lonScale = max(0.1, cos(Math.toRadians((requestedLat + gridCellLat) / 2.0)))
+                    val distanceKm = sqrt(
+                        ((gridCellLat - requestedLat) * 111.32) *
+                            ((gridCellLat - requestedLat) * 111.32) +
+                            ((gridCellLon - requestedLon) * 111.32 * lonScale) *
+                            ((gridCellLon - requestedLon) * 111.32 * lonScale)
+                    )
+                    val distStr = if (distanceKm >= 1.0) {
+                        String.format(java.util.Locale.US, "%.1f", distanceKm)
+                    } else {
+                        String.format(java.util.Locale.US, "%.2f", distanceKm)
+                    }
+                    Text(
+                        text = "خانه\u200cی سلول شبیه\u200cسازی: ${String.format(java.util.Locale.US, "%.4f", gridCellLat)}, ${String.format(java.util.Locale.US, "%.4f", gridCellLon)} (فاصله: ${distStr}km" +
+                            (gridCellElevation?.let { String.format(java.util.Locale.US, " · ارتفاع سلول: %.0fm", it) } ?: "") + ")",
+                        fontSize = 8.sp,
+                        color = getTextColor(0.4f),
+                        fontWeight = FontWeight.Normal
+                    )
                 }
             }
         }
