@@ -313,6 +313,11 @@ class WeatherViewModel(
                 settingsDataStore.setPremium(enabled)
             }
         }
+        // اگر کاربر در طول این نشست premium می‌شود، سقف پیش‌بینی از ۳ به ۱۶ روز تغییر می‌کند؛
+        // بدون این رفرش بی‌صدا، چیپ‌های ۷/۱۶ روزه تا رفرش بعدی، تکرار ۳ روز موجود را نشان می‌دادند.
+        if (enabled) {
+            _selectedMountain.value?.let { refreshCurrentMountainWeather() }
+        }
     }
 
     /**

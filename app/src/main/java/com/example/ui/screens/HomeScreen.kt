@@ -11725,6 +11725,7 @@ data class CompiledDailyItem(
     val rawTempMin: Double,
     val weatherCode: Int,
     val weatherDesc: String,
+    val worstHourIsDay: Int = 1,
     val safetyLabel: String,
     val safetyColor: Color,
     val safetyDescription: String,
@@ -11816,9 +11817,8 @@ fun DailyForecastSection(
             var adjTempMax = rawTempMax + (diff * 0.0065)
             var adjTempMin = rawTempMin + (diff * 0.0065)
 
-            val wCode = daily.weatherCode.getOrNull(i) ?: 0
-            val wDesc = WeatherCodeHelper.getDescription(wCode)
-            
+            var wCode = daily.weatherCode.getOrNull(i) ?: 0
+
             val rawWindMax = MountaineeringHelper.normalizeWindSpeed(daily.windSpeed10mMax?.getOrNull(i))
             val adjWindSpeedMax = MountaineeringHelper.adjustWindWithAltitude(
                 referenceWind = rawWindMax,
@@ -11897,6 +11897,11 @@ fun DailyForecastSection(
 
             var safeHoursCount = 24
             var totalHoursCount = 24
+            // کد WMO و وضعیت روز/شبِ «بدترین ساعت» که گزارش ایمنی روز از آن انتخاب می‌شود —
+            // تا آیکون/توضیح با رنگ ایمنی هم‌منبع باشند. (کد تجمیعی daily تمایز
+            // روز/شب ندارد؛ طبق §21 اسکیل 0=صاف شب با 0=صاف روز یکسان است)
+            var worstHourIsDay = 1
+            var worstHourCode: Int? = null
 
             if (hourly != null) {
                 val foundIdx = hourly.time.indexOfFirst { it.startsWith(dateStr) }
@@ -12022,17 +12027,24 @@ fun DailyForecastSection(
                         if (scoreWeight > worstWeight) {
                             worstStatus = hourReport.status
                             worstReport = hourReport
+                            worstHourIsDay = hourSimulatedCurrent.isDay ?: 1
+                            worstHourCode = hourly.weatherCode.getOrNull(absoluteHourIdx)
                         } else if (scoreWeight == worstWeight) {
                             if (hourReport.riskScore > worstReport.riskScore) {
                                 worstReport = hourReport
+                                worstHourIsDay = hourSimulatedCurrent.isDay ?: 1
+                                worstHourCode = hourly.weatherCode.getOrNull(absoluteHourIdx)
                             }
                         }
                     }
                     finalDailyReport = worstReport
                     safeHoursCount = localSafeCount
                     totalHoursCount = localTotalCount
+                    worstHourCode?.let { wCode = it }
                 }
             }
+
+            val wDesc = WeatherCodeHelper.getDescription(wCode, worstHourIsDay)
 
             val absMax = kotlin.math.abs(adjTempMax)
             val absMin = kotlin.math.abs(adjTempMin)
@@ -12071,6 +12083,7 @@ fun DailyForecastSection(
                 rawTempMin = rawTempMin,
                 weatherCode = wCode,
                 weatherDesc = wDesc,
+                worstHourIsDay = worstHourIsDay,
                 safetyLabel = safetyLabelVal,
                 safetyColor = safetyColorVal,
                 safetyDescription = safetyDescVal,
@@ -12284,7 +12297,7 @@ fun DailyForecastSection(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
-                                        imageVector = WeatherCodeHelper.getIcon(item.weatherCode),
+                                        imageVector = WeatherCodeHelper.getIcon(item.weatherCode, item.worstHourIsDay),
                                         contentDescription = "Daily Weather Icon",
                                         tint = item.safetyColor,
                                         modifier = Modifier.size(16.dp)
