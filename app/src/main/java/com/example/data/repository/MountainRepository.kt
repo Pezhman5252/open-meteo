@@ -169,8 +169,13 @@ class MountainRepository(private val mountainDao: MountainDao) {
                 }
 
                 // Query existing peaks
+                // کلید یکتا = (نام انگلیسی + نوع): یک قله و یک پیست اسکی میتوانند نام انگلیسی
+                // یکسان داشته باشند (مثلاً Shirbad)؛ بدون نوع، map برخورد کرده و هر sync
+                // ردیف را بین دو نوع جابهجا میکند (ping-pong بیپایان updatedCount).
                 val localItems = mountainDao.getMountainList()
-                val localOfficialMap = localItems.filter { !it.isCustom }.associateBy { it.name }
+                fun officialKey(name: String, type: String?) = "$name||${type ?: "iran_peak"}"
+                val localOfficialMap = localItems.filter { !it.isCustom }
+                    .associateBy { officialKey(it.name, it.type) }
 
                 val flattenList = mutableListOf<Pair<MountainSyncItem, String>>()
                 syncData.iranPeaks?.forEach { flattenList.add(it to "iran_peak") }
@@ -180,10 +185,10 @@ class MountainRepository(private val mountainDao: MountainDao) {
                 var addedCount = 0
                 var updatedCount = 0
 
-                val onlineNames = flattenList.map { it.first.englishName }.toSet()
+                val onlineKeys = flattenList.map { (item, type) -> officialKey(item.englishName, type) }.toSet()
 
                 for ((remoteItem, typeValue) in flattenList) {
-                    val existingLocal = localOfficialMap[remoteItem.englishName]
+                    val existingLocal = localOfficialMap[officialKey(remoteItem.englishName, typeValue)]
                     if (existingLocal != null) {
                         val isChanged = existingLocal.persianName != remoteItem.name ||
                                 existingLocal.province != remoteItem.province ||
@@ -230,7 +235,7 @@ class MountainRepository(private val mountainDao: MountainDao) {
 
                 // Delete official mountains that were removed from the official online dataset
                 for (localOfficialItem in localOfficialMap.values) {
-                    if (!onlineNames.contains(localOfficialItem.name)) {
+                    if (!onlineKeys.contains(officialKey(localOfficialItem.name, localOfficialItem.type))) {
                         mountainDao.deleteMountain(localOfficialItem)
                     }
                 }

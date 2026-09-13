@@ -417,7 +417,9 @@ class WeatherViewModel(
     val lastSyncUpdated = _lastSyncUpdated.asStateFlow()
 
     companion object {
-        const val PRODUCTION_WORKER_URL = "https://mountain-weather-api.persianboy-1991g.workers.dev/"
+        // URL پیشفرض همگامسازی اطلس = ورکر mountain-api (دیتابیس قلل)؛
+        // mountain-weather-api پروکسی Open-Meteo است و پاسخ / آن شکل MountainSyncResponse ندارد.
+        const val PRODUCTION_WORKER_URL = "https://mountain-api.persianboy-1991g.workers.dev/"
         const val BILLING_WORKER_URL = "https://ir-mountain-weather-billing.persianboy-1991g.workers.dev/"
     }
 
