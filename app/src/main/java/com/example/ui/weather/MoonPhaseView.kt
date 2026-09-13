@@ -209,7 +209,7 @@ fun MoonPhaseViewCompose(
     modifier: Modifier = Modifier
 ) {
     Canvas(
-        modifier = modifier.size(76.dp)
+        modifier = modifier
     ) {
         val width = size.width
         val height = size.height
@@ -221,6 +221,43 @@ fun MoonPhaseViewCompose(
         val cy = height / 2f
 
         if (radius > 0f) {
+            // 0. Natural luminosity halo — layered radial rings whose radius and
+            // opacity scale with the moon's actual brightness (illumination).
+            // Drawn BEFORE the disk so the dark silhouette covers the interior,
+            // leaving a soft, physical glow ring around the bright part.
+            if (illumination > 0.02f) {
+                // لایهی ۱: هالهی بیرونی گسترده (تا و هم پخشش نور جوّی)
+                val outerRadius = radius * (1.10f + 0.22f * illumination)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            ComposeColor(0xFFFFF3C4).copy(alpha = 0.14f + 0.34f * illumination),
+                            ComposeColor(0xFFFFF8E1).copy(alpha = 0.10f + 0.16f * illumination),
+                            ComposeColor.Transparent
+                        ),
+                        center = Offset(cx, cy),
+                        radius = outerRadius
+                    ),
+                    radius = outerRadius,
+                    center = Offset(cx, cy)
+                )
+                // لایهی ۲: شکوفایی نزدیک لبه (bloom) — تمرکز نور در تماس با دیسک
+                val bloomRadius = radius * 1.05f
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            ComposeColor.Transparent,
+                            ComposeColor(0xFFFFF6D8).copy(alpha = 0.55f * illumination),
+                            ComposeColor.Transparent
+                        ),
+                        center = Offset(cx, cy),
+                        radius = bloomRadius
+                    ),
+                    radius = bloomRadius,
+                    center = Offset(cx, cy)
+                )
+            }
+
             // 1. Draw dark background circle (lunar body silhouette)
             drawCircle(
                 color = ComposeColor(0xFF1A1A2E), // Deep space dark grayish-blue

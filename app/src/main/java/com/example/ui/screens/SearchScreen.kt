@@ -434,13 +434,11 @@ fun SearchScreen(
                 }
 
                 if (altitudeRange != (0 to 10000)) {
+                    // برچسب از خود بازه مشتق میشود — سازگار با هر سه دسته (ایران/برونمرزی/اسکی)
                     val labelText = when {
-                        altitudeRange.first >= 8000 -> "بالای ۸۰۰۰متر"
-                        altitudeRange.first >= 6000 -> "۶۰۰۰ تا ۸۰۰۰متر"
-                        altitudeRange.first >= 4000 -> "۴۰۰۰ تا ۶۰۰۰متر"
-                        altitudeRange.first >= 3000 -> "۳۰۰۰ تا ۴۰۰۰متر"
-                        altitudeRange.second <= 4000 -> "زیر ۴۰۰۰متر"
-                        else -> "ارتفاع خاص"
+                        altitudeRange.first <= 0 && altitudeRange.second < 10000 -> "زیر ${PersianDateHelper.formatToPersianDigits(altitudeRange.second)}متر"
+                        altitudeRange.second >= 10000 -> "بالای ${PersianDateHelper.formatToPersianDigits(altitudeRange.first)}متر"
+                        else -> "${PersianDateHelper.formatToPersianDigits(altitudeRange.first)} تا ${PersianDateHelper.formatToPersianDigits(altitudeRange.second)}متر"
                     }
                     InputChip(
                         selected = true,
@@ -985,7 +983,7 @@ fun SearchScreen(
                                 listOf(
                                     FamousPeakPreset("علم‌کوه", 4850, 36.3761, 50.9636, "مازندران", "البرز مرکزی"),
                                     FamousPeakPreset("سبلان", 4811, 38.2672, 47.8394, "اردبیل", "سهند و سبلان"),
-                                    FamousPeakPreset("دماوند", 5671, 35.9550, 52.1106, "مازندران", "البرز مرکزی"),
+                                    FamousPeakPreset("دماوند", 5610, 35.9550, 52.1106, "مازندران", "البرز مرکزی"),
                                     FamousPeakPreset("آزادکوه", 4355, 36.1706, 51.5039, "مازندران", "البرز مرکزی"),
                                     FamousPeakPreset("کلون‌بستک", 4180, 36.0500, 51.4833, "تهران", "البرز مرکزی"),
                                     FamousPeakPreset("اورست", 8848, 27.9881, 86.9250, "نپال/چین", "هیمالیا"),

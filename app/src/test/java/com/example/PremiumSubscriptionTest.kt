@@ -107,6 +107,9 @@ class PremiumSubscriptionTest {
 
     @Test
     fun testPremiumStateFlow_defaultsToFalse() = runBlocking {
+        // اجازه بده کلکشن eager بلافاصلهِ DataStore مقدار reset شده (false) را منتشر کند؛
+        // بدون این تاخیر، ممکن است مقدار تست قبلی (true) هنوز در جریان باشد (race در Robolectric).
+        delay(300)
         // Assert default premium state is false
         assertFalse("By default, isPremium should be false", viewModel.isPremium.value)
     }

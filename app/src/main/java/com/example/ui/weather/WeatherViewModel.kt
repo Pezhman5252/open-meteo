@@ -305,18 +305,37 @@ class WeatherViewModel(
     }
 
     fun setPremium(context: android.content.Context, enabled: Boolean) {
+        applyPremiumState(enabled)
+        if (enabled) {
+            refreshForPremiumUpgrade()
+        }
+    }
+
+    /**
+     * پس از فعالسازی/ترمیم پریمیوم، اگر دادهی پیشبینیِ جاری هنوز با سقف رایگان (۳ روز)
+     * fetch شده باشد، یک رفرش بیصدا با سقف جدید (۱۶ روز) انجام میشود؛ در غیر این صورت
+     * (داده از قبل ۱۶ روزه است) درخواست شبکهی اضافی انجام نمیشود.
+     */
+    private fun refreshForPremiumUpgrade() {
+        val state = _weatherUiState.value
+        val currentDays = (state as? WeatherUiState.Success)?.weather?.daily?.time?.size ?: 0
+        if (currentDays in 0..3) {
+            refreshCurrentMountainWeather()
+        }
+    }
+
+    /**
+     * نقطهی واحد اعمال تغییر وضعیت پریمیوم. هر تغییر به true باید از این مسیر رد شود
+     * تا وضعیت پایدار در DataStore ذخیره شود.
+     */
+    private fun applyPremiumState(enabled: Boolean) {
         _isPremium.value = enabled
         viewModelScope.launch {
             if (!enabled) {
                 settingsDataStore.clearActivationDetails()
             } else {
-                settingsDataStore.setPremium(enabled)
+                settingsDataStore.setPremium(true)
             }
-        }
-        // اگر کاربر در طول این نشست premium می‌شود، سقف پیش‌بینی از ۳ به ۱۶ روز تغییر می‌کند؛
-        // بدون این رفرش بی‌صدا، چیپ‌های ۷/۱۶ روزه تا رفرش بعدی، تکرار ۳ روز موجود را نشان می‌دادند.
-        if (enabled) {
-            _selectedMountain.value?.let { refreshCurrentMountainWeather() }
         }
     }
 
@@ -550,8 +569,13 @@ class WeatherViewModel(
     private val _selectedAltitude = MutableStateFlow<Int?>(null)
     val selectedAltitude = _selectedAltitude.asStateFlow()
 
-    private val _selectedDaysCount = MutableStateFlow(3)
-    val selectedDaysCount = _selectedDaysCount.asStateFlow()
+    // بازهی روزهای هر کارت مستقل است: کاربر می‌تواند همزمان ۱۶ روز را در
+    // پنجره طلایی و ۷ روز را در پیش‌بینی روزانه ببیند (درخواست محصولی).
+    private val _goldenWindowDaysCount = MutableStateFlow(3)
+    val goldenWindowDaysCount = _goldenWindowDaysCount.asStateFlow()
+
+    private val _dailyForecastDaysCount = MutableStateFlow(3)
+    val dailyForecastDaysCount = _dailyForecastDaysCount.asStateFlow()
 
     private val _lastUpdatedTime = MutableStateFlow<String>("")
     val lastUpdatedTime = _lastUpdatedTime.asStateFlow()
@@ -713,8 +737,12 @@ class WeatherViewModel(
         _selectedAltitude.value = altitude
     }
 
-    fun setSelectedDaysCount(days: Int) {
-        _selectedDaysCount.value = days
+    fun setGoldenWindowDaysCount(days: Int) {
+        _goldenWindowDaysCount.value = days
+    }
+
+    fun setDailyForecastDaysCount(days: Int) {
+        _dailyForecastDaysCount.value = days
     }
 
     fun refreshCurrentMountainWeather(onResult: ((Boolean) -> Unit)? = null) {
@@ -1127,6 +1155,8 @@ class WeatherViewModel(
                                     message = "کد فعال‌سازی با موفقیت تایید و اشتراک پرو شما فعال شد. صعود ایمنی داشته باشید!",
                                     expiresAt = expiresAt
                                 )
+                                // دریافت فوری دادهی ۷/۱۶ روزه (سقف پیش‌بینی از ۳ به ۱۶ تغییر کرده)
+                                refreshForPremiumUpgrade()
                                 Log.d("WeatherViewModel", "Activation code verified successfully: ${verifyRes.subscription_id}")
                             } else {
                                 val errorMsg = parseErrorMessage(responseBody ?: "") ?: "کد فعال‌سازی نامعتبر، استفاده شده یا منقضی شده است."
@@ -1226,6 +1256,8 @@ class WeatherViewModel(
                                             expiresAt = newExpiresAt
                                         )
                                     }
+                                    // دریافت فوری دادهی ۷/۱۶ روزه (سقف پیش‌بینی از ۳ به ۱۶ تغییر کرده)
+                                    refreshForPremiumUpgrade()
                                     Log.d("WeatherViewModel", "Subscription check: ACTIVE. Expires at: $newExpiresAt")
                                 } else {
                                     // Keep details but disable premium status

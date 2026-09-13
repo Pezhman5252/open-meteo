@@ -849,7 +849,8 @@ fun HomeScreenContent(
     offlineTime: String? = null
 ) {
     val activeAltitude = selectedAltitude ?: mountain.altitude
-    val selectedDaysCount by viewModel.selectedDaysCount.collectAsStateWithLifecycle()
+    val selectedDaysCount by viewModel.dailyForecastDaysCount.collectAsStateWithLifecycle()
+    val goldenWindowDaysCount by viewModel.goldenWindowDaysCount.collectAsStateWithLifecycle()
     val isPremium by viewModel.isPremium.collectAsStateWithLifecycle()
     val peakTemp = weather.current?.temperature2m ?: 0.0
 
@@ -1076,8 +1077,13 @@ fun HomeScreenContent(
             alpha = null
         )
 
-        // Visibility & Cloud Cover fallbacks
-        val offsetHours = com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+        // Visibility & Cloud Cover fallbacks — زنجیرهی آفست استاندارد (متادیتای DST-aware)
+        val offsetHours = com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+            apiUtcOffsetSeconds = weather.utcOffsetSeconds,
+            name = mountain.name,
+            latitude = mountain.latitude,
+            longitude = mountain.longitude
+        )
         val currentHourIdx = MountaineeringHelper.findHourlyIndexForCurrent(current, weather.hourly, offsetHours)
         val fallbackVisibility = weather.hourly?.visibility?.getOrNull(currentHourIdx)
         val fallbackCloudCover = weather.hourly?.cloudCover?.getOrNull(currentHourIdx)?.toDouble()
@@ -1236,7 +1242,8 @@ fun HomeScreenContent(
                             mountain = mountain,
                             minutely15 = weather.minutely15,
                             units = weather.hourlyUnits,
-                            daily = weather.daily
+                            daily = weather.daily,
+                            apiUtcOffsetSeconds = weather.utcOffsetSeconds
                         )
                     }
                 }
@@ -1272,6 +1279,7 @@ fun HomeScreenContent(
                 item(key = "hourly_forecast", contentType = "hourly") {
                     weather.hourly?.let { hourly ->
                         HourlyForecastSection(
+                            viewModel = viewModel,
                             hourly = hourly,
                             altitude = activeAltitude,
                             mountain = mountain,
@@ -1288,8 +1296,8 @@ fun HomeScreenContent(
                         daily = weather.daily,
                         altitude = activeAltitude,
                         mountain = mountain,
-                        selectedDaysCount = selectedDaysCount,
-                        onDaysCountChanged = { days -> viewModel.setSelectedDaysCount(days) }
+                        selectedDaysCount = goldenWindowDaysCount,
+                        onDaysCountChanged = { days -> viewModel.setGoldenWindowDaysCount(days) }
                     )
                 }
 
@@ -1303,8 +1311,9 @@ fun HomeScreenContent(
                             altitude = activeAltitude,
                             mountain = mountain,
                             selectedDaysCount = selectedDaysCount,
-                            onDaysCountChanged = { days -> viewModel.setSelectedDaysCount(days) },
-                            units = weather.hourlyUnits
+                            onDaysCountChanged = { days -> viewModel.setDailyForecastDaysCount(days) },
+                            units = weather.hourlyUnits,
+                            apiUtcOffsetSeconds = weather.utcOffsetSeconds
                         )
                     }
                 }
@@ -1447,6 +1456,18 @@ fun findGoldenWindows(
         val freezingLevel = hourly.freezingLevelHeight?.getOrNull(i) ?: 0.0
         val weatherCode = hourly.weatherCode.getOrNull(i) ?: 0
 
+        // تصحیح ارتفاع تندباد نیز مانند سرعت باد — تا هر دو کمیت در تراز صعود
+        // مقایسه شوند؛ در غیر این صورت در ترازهای پایینتر، باد relaxed میشد ولی
+        // تندباد در سطح قله باقی میماند (ناسازگاری فیزیکی)
+        val rawGustsAdjInput = hourly.windGusts10m?.getOrNull(i)
+            ?: (adjWind * MountaineeringHelper.calculateDynamicGustFactor(cape))
+        val adjWindGusts = MountaineeringHelper.adjustWindWithAltitude(
+            referenceWind = rawGustsAdjInput,
+            referenceElevation = mountain.altitude.toDouble(),
+            targetAltitude = altitude.toDouble(),
+            alpha = null
+        )
+
         val lightningRisk = MountaineeringHelper.calculateLightningRisk(
             cape = cape,
             precipitation = precipitation,
@@ -1458,7 +1479,7 @@ fun findGoldenWindows(
         )
 
         val precipProb = hourly.precipitationProbability?.getOrNull(i) ?: 0
-        val windGusts = hourly.windGusts10m?.getOrNull(i) ?: (adjWind * MountaineeringHelper.calculateDynamicGustFactor(hourly.cape?.getOrNull(i)))
+        val windGusts = adjWindGusts
         val snowfall = MountaineeringHelper.normalizeSnowfallCm(hourly.snowfall?.getOrNull(i))
 
         val windRisk = MountaineeringHelper.calculateWindRisk(
@@ -1476,11 +1497,21 @@ fun findGoldenWindows(
         // Zero-tolerance policy for lightning hazard in Golden Window
         val isLightningSafe = lightningRisk <= 5 && cape < 300.0
 
+        // دید افقی: مدلهای غیر HRRR/ICON-D2 گاهی visibility را null برمیگردانند
+        // (اسکیل §31: دادهی غایب ≠ دادهی خطرناک). اگر cloud_cover موجود است، از آن
+        // بهعنوان شاخص جانبی استفاده میکنیم؛ فقط ابرهای پایینِ متراکم ناپسند تلقی میشوند.
+        // اگر visibility موجود است، آستانهی سخت اعمال میشود.
+        val isVisSafe = if (hourly.visibility?.getOrNull(i) != null) {
+            visibility >= minVisLimit
+        } else {
+            cloudCover < 70.0
+        }
+
         // Professional criteria for Golden Window (ideal summit push) - Worst-case scan per hour
         val isSafe = isLightningSafe &&
                 adjWind <= maxWindLimit &&
                 windGusts <= maxGustLimit &&
-                visibility >= minVisLimit &&
+                isVisSafe &&
                 windChill >= minWindChillLimit &&
                 precipitation <= 0.05 &&   // Dry
                 snowfall <= 0.05 &&        // No active snowfall
@@ -3126,7 +3157,13 @@ fun MountainHeroCard(
                                     lat = mountain.latitude,
                                     lon = mountain.longitude
                                 )
-                                val offsetHours = com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+                                // زنجیرهی آفست استاندارد — قلل DSTدار هم ۱ ساعت خطا نمیگیرند
+                                val offsetHours = com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+                                    apiUtcOffsetSeconds = weather.utcOffsetSeconds,
+                                    name = mountain.name,
+                                    latitude = mountain.latitude,
+                                    longitude = mountain.longitude
+                                )
                                 MountaineeringHelper.evaluateSafety(
                                     current = stepCurrent,
                                     hourly = weather.hourly,
@@ -3832,7 +3869,8 @@ fun ClimbingSafetyCard(
     mountain: com.example.data.local.MountainEntity,
     minutely15: com.example.data.remote.Minutely15Data? = null,
     units: com.example.data.remote.WeatherUnits? = null,
-    daily: com.example.data.remote.DailyData? = null
+    daily: com.example.data.remote.DailyData? = null,
+    apiUtcOffsetSeconds: Int? = null
 ) {
     val isDark = MaterialTheme.colorScheme.background.isDark
     val isPremium by viewModel.isPremium.collectAsStateWithLifecycle()
@@ -3879,7 +3917,12 @@ fun ClimbingSafetyCard(
 
     val upcomingHoursRisks = remember(current, hourly, daily, altitude, mountain, minutely15, units, timeTick) {
         if (hourly == null) emptyList<UpcomingHourRisk>() else {
-            val offsetHours = com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+            val offsetHours = com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+                apiUtcOffsetSeconds = apiUtcOffsetSeconds,
+                name = mountain.name,
+                latitude = mountain.latitude,
+                longitude = mountain.longitude
+            )
             val currentHourIdx = MountaineeringHelper.findHourlyIndexForCurrent(current, hourly, offsetHours)
             val startIdx = currentHourIdx.coerceAtLeast(0)
             val endIdx = (startIdx + 24).coerceAtMost(hourly.time.size)
@@ -4450,12 +4493,12 @@ fun ClimbingSafetyCard(
 
                         val visKm = report.visibilityMeters / 1000.0
                         val visStr = if (report.visibilityMeters >= 1000.0) {
-                            String.format(java.util.Locale.US, "%.1fkm", visKm)
+                            "\u200E" + PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", visKm)) + "km"
                         } else {
-                            String.format(java.util.Locale.US, "%.0fm", report.visibilityMeters)
+                            "\u200E" + PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.0f", report.visibilityMeters)) + "م"
                         }
-                        val windStr = String.format(java.util.Locale.US, "%.0fkm/h", report.windSpeedKmH)
-                        val chillStr = String.format(java.util.Locale.US, "%.0f°C", report.windChillC)
+                        val windStr = "\u200E" + PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.0f", report.windSpeedKmH)) + " ک.م/س"
+                        val chillStr = "\u200E" + PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.0f", report.windChillC)) + "°C"
                         val avalancheLvl = when (report.avalancheRisk) {
                             in 0..20 -> "۱"
                             in 21..40 -> "۲"
@@ -4463,7 +4506,7 @@ fun ClimbingSafetyCard(
                             in 61..80 -> "۴"
                             else -> "۵"
                         }
-                        val uvStr = String.format(java.util.Locale.US, "%.1f", report.uvIndexValue)
+                        val uvStr = "\u200E" + PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", report.uvIndexValue))
 
                         val hazardFactors = listOf(
                             Triple("⚡ رعدوبرق", report.lightningRisk, PersianDateHelper.formatToPersianDigits("${report.lightningRisk}٪")),
@@ -4861,7 +4904,13 @@ fun ClimbingSafetyCard(
                                         border = BorderStroke(1.dp, if (isDark) Color(0xFF00FFE0).copy(alpha = 0.4f) else Color(0xFF0284C7).copy(alpha = 0.4f))
                                     ) {
                                         Text(
-                                            text = "${PersianDateHelper.formatToPersianDigits(report.minutelyConfidencePercent)}٪ (عالی)",
+                                            // برچسب کیفیت بر اساس درصد واقعی — نه هاردکد «عالی»
+                                            text = "${PersianDateHelper.formatToPersianDigits(report.minutelyConfidencePercent)}٪" +
+                                                when {
+                                                    report.minutelyConfidencePercent >= 90 -> " (عالی)"
+                                                    report.minutelyConfidencePercent >= 80 -> " (خوب)"
+                                                    else -> " (تقریبی)"
+                                                },
                                             fontSize = 9.5.sp,
                                             fontWeight = FontWeight.ExtraBold,
                                             color = if (isDark) Color(0xFF00FFE0) else Color(0xFF0284C7),
@@ -5375,7 +5424,8 @@ fun ClimbingSafetyCard(
                             val wbVal = report.wetBulb
                             val (wbLabel, wbColor) = when {
                                 wbVal == null -> "نامشخص" to scTextColor.copy(alpha = 0.5f)
-                                wbVal < 0.0 -> "خطر انجماد" to (if (isDark) Color(0xFF00E5FF) else Color(0xFF0284C7))
+                                // دمای مرطوب زیر صفر = یخزدگی/ورگلاس — هشدار (کهربایی)، نه رنگ خنثی
+                                wbVal < 0.0 -> "خطر انجماد" to (if (isDark) Color(0xFFFFB300) else Color(0xFFB45309))
                                 wbVal <= 15.0 -> "ایده‌آل صعود" to (if (isDark) Color(0xFF00FF87) else Color(0xFF15803D))
                                 wbVal <= 22.0 -> "مطبوع" to (if (isDark) Color(0xFFAEEA00) else Color(0xFF4D7C0F))
                                 wbVal <= 28.0 -> "استرس گرمایی" to (if (isDark) Color(0xFFFFA726) else Color(0xFFC2410C))
@@ -5796,7 +5846,7 @@ fun ClimbingSafetyCard(
                         }
 
                         Text(
-                            text = "مدلسازی دینامیک open-meteo.com و ترازسنجی چندگانه اتمسفر mountain meteorology",
+                            text = "مدلسازی دینامیک جو بر بستر Open-Meteo و ترازسنجی چندگانه هواشناسی کوهستان",
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Normal,
                             color = scSubTextColor,
@@ -5812,8 +5862,8 @@ fun ClimbingSafetyCard(
                         ) {
                             report.environmentalHazards.forEach { hazard ->
                                 val isPositive = hazard.startsWith("✅")
-                                val isCritical = hazard.startsWith("🚨")
-                                val isWarning = hazard.startsWith("⚠️")
+                                val isCritical = hazard.startsWith("🚨") || hazard.startsWith("⚡")
+                                val isWarning = hazard.startsWith("⚠️") || hazard.startsWith("🧊") || hazard.startsWith("🥶") || hazard.startsWith("🌧") || hazard.startsWith("❄") || hazard.startsWith("🏔") || hazard.startsWith("🌡")
 
                                 val boxBg = when {
                                     isPositive -> if (isDark) Color(0xFF00FF87).copy(alpha = 0.05f) else Color(0xFF15803D).copy(alpha = 0.06f)
@@ -5986,8 +6036,8 @@ fun ClimbingSafetyCard(
                                 .padding(14.dp)
                         ) {
                             report.climbingRecommendations.forEach { recommendation ->
-                                val isCriticalEscape = recommendation.startsWith("🚨") || recommendation.contains("اقدام فرار")
-                                val isCautionAction = recommendation.startsWith("⚠️") || recommendation.contains("احتیاط تاکتیکی")
+                                val isCriticalEscape = recommendation.startsWith("🚨") || recommendation.startsWith("🛑") || recommendation.startsWith("⚡") || recommendation.contains("اقدام فرار")
+                                val isCautionAction = recommendation.startsWith("⚠️") || recommendation.startsWith("🧊") || recommendation.startsWith("🥶") || recommendation.startsWith("🌧") || recommendation.startsWith("❄") || recommendation.contains("احتیاط تاکتیکی")
 
                                 val itemIcon = when {
                                     isCriticalEscape -> Icons.Default.Warning
@@ -6164,13 +6214,23 @@ fun CurrentWeatherSection(
     hourly: com.example.data.remote.HourlyData?,
     daily: com.example.data.remote.DailyData? = null,
     altitude: Int,
-    mountain: MountainEntity
+    mountain: MountainEntity,
+    apiUtcOffsetSeconds: Int? = null
 ) {
-    val stats = remember(current, hourly, daily, altitude, mountain) {
+    val stats = remember(current, hourly, daily, altitude, mountain, apiUtcOffsetSeconds) {
         val windSpeed80mVal = current.windSpeed80m ?: current.windSpeed10m
         val windDirection80mVal = current.windDirection80m ?: current.windDirection10m
         val humidityVal = current.relativeHumidity2m ?: 60.0
-        val surfacePressureVal = current.surfacePressure ?: 850.0
+        // فشار سطحی: اگر API مقدار نداد، با ISA (QNH استاندارد) برای تراز صعود تخمین
+        // زده میشود — نه عدد جعلی ثابت؛ سنجشگر اکسیژن هرگز بهینهی کاذب نشان نمیدهد.
+        val surfacePressureVal = current.surfacePressure
+            ?: MountaineeringHelper.calculateBarometricPressure(
+                basePressure = null,
+                baseTemp = current.temperature2m,
+                baseAltitude = mountain.altitude.toDouble(),
+                targetAltitude = altitude.toDouble(),
+                qnh = 1013.25
+            )
         
         val isNightCurrent = current.isDay == 0
         val windChillVal = MountaineeringHelper.calculateWindChill(current.temperature2m, windSpeed80mVal, isNight = isNightCurrent)
@@ -6179,7 +6239,13 @@ fun CurrentWeatherSection(
         val isSnowCoverPresent = (current.snowfall ?: 0.0) > 0.0 || 
             (current.snowDepth ?: 0.0) > 0.0 || 
             ((current.precipitation ?: 0.0) > 0.0 && current.temperature2m <= 0.5)
-        val offsetHours = com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+        // همراستا با زنجیرهی آفست استاندارد اپ (resolvePeakOffset) — جدول فقط fallback
+        val offsetHours = com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+            apiUtcOffsetSeconds = apiUtcOffsetSeconds,
+            name = mountain.name,
+            latitude = mountain.latitude,
+            longitude = mountain.longitude
+        )
         val uvIndexVal = MountaineeringHelper.calculateResolvedUvIndex(
             current = current,
             hourly = hourly,
@@ -6674,11 +6740,13 @@ fun CurrentWeatherSection(
                             color = getTextColor(0.4f)
                         )
                         Spacer(modifier = Modifier.height(2.dp))
+                        // رنگ همسو با خطر: مسیر یخزده = هشدار (کهربایی/قرمز)؛
+                        // مسیر بدون یخ = ایمن (سبز) — قبلاً معکوس بود
                         Text(
                             text = if (stats.pathIsFrozen) "یخبندان کامل" else "مرطوب / بدون یخ",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (stats.pathIsFrozen) (if (isDark) Color(0xFF00E5FF) else Color(0xFF006064)) else (if (isDark) Color(0xFFFF9100) else Color(0xFFB45309))
+                            color = if (stats.pathIsFrozen) (if (isDark) Color(0xFFFFB300) else Color(0xFFB45309)) else (if (isDark) Color(0xFF00FF87) else Color(0xFF15803D))
                         )
                     }
 
@@ -6691,11 +6759,16 @@ fun CurrentWeatherSection(
                             color = getTextColor(0.4f)
                         )
                         Spacer(modifier = Modifier.height(2.dp))
+                        // اشباع هوا (مه): همآستانه با سنجشگر «فاصله اشباع مه» (۱/۳/۱۰)
                         Text(
-                            text = if (stats.spread < 1.5) "اشباع کامل (مه)" else if (stats.spread < 4.0) "نیمه‌اشباع" else "دید شفاف",
+                            text = when {
+                                stats.spread < 1.0 -> "اشباع کامل (مه)"
+                                stats.spread < 3.0 -> "نیمه‌اشباع"
+                                else -> "دید شفاف"
+                            },
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (stats.spread < 1.5) Color(0xFFFF5252) else if (stats.spread < 4.0) (if (isDark) Color(0xFFFFB300) else Color(0xFFB45309)) else (if (isDark) Color(0xFF00FF87) else Color(0xFF15803D))
+                            color = if (stats.spread < 1.0) Color(0xFFFF5252) else if (stats.spread < 3.0) (if (isDark) Color(0xFFFFB300) else Color(0xFFB45309)) else (if (isDark) Color(0xFF00FF87) else Color(0xFF15803D))
                         )
                     }
                 }
@@ -6945,8 +7018,14 @@ fun PressureStormChart(
 
     val isDark = MaterialTheme.colorScheme.background.isDark
     
+    // همراستا با زنجیرهی آفست استاندارد اپ (resolvePeakOffset) — متادیتای DST-aware
     val offsetHours = remember(mountain.name, mountain.latitude, mountain.longitude) {
-        com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+        com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+            apiUtcOffsetSeconds = null, // چارت به متادیتای پاسخ دسترسی مستقیم ندارد؛ جدول قلل fallback است
+            name = mountain.name,
+            latitude = mountain.latitude,
+            longitude = mountain.longitude
+        )
     }
     val currentHourIdx = remember(current, hourly, offsetHours) {
         MountaineeringHelper.findHourlyIndexForCurrent(current, hourly, offsetHours)
@@ -6985,13 +7064,30 @@ fun PressureStormChart(
                     qnh = qnhP
                 )
 
-                val capeVal = hourly.cape?.getOrNull(idx) ?: 0.0
+                // CAPE: برای گام صفر (ساعت جاری) از current.cape استفاده میشود — همان
+                // مقداری که سنجشگر «پتانسیل صاعقه (CAPE)» در سنجشگرهای پیشرفته جوی
+                // نمایش میدهد (current.cape = لحظهی current.time، بهروزتر از خانهی
+                // ساعتِ مدل). برای ساعات بعدی، خانهی ساعتی رسمی Open-Meteo (§6).
+                val capeVal = if (step == 0 && current.cape != null) {
+                    current.cape
+                } else {
+                    hourly.cape?.getOrNull(idx) ?: current.cape ?: 0.0
+                }
                 val precipMm = hourly.precipitation?.getOrNull(idx) ?: 0.0
                 val precipProb = hourly.precipitationProbability?.getOrNull(idx) ?: 0
                 val cloudCoverVal = hourly.cloudCover?.getOrNull(idx) ?: 0.0
                 val freezingLevelVal = hourly.freezingLevelHeight?.getOrNull(idx) ?: MountaineeringHelper.estimateFreezingLevel(adjTemp, altitude).toDouble()
                 val code = hourly.weatherCode.getOrNull(idx) ?: 0
-                val gusts = hourly.windGusts10m?.getOrNull(idx) ?: 0.0
+                val rawGusts = hourly.windGusts10m?.getOrNull(idx) ?: 0.0
+                // تصحیح ارتفاع تندباد — همسو با سنجشگر «تندباد خط‌الرأس» در همین کارت
+                // و کارت ساعتی؛ در غیر این صورت آستانههای ۶۵/۴۵ در ترازهای پایینتر
+                // با باد سطح قله سنجیده میشد (ناسازگاری فیزیکی)
+                val gusts = MountaineeringHelper.adjustWindWithAltitude(
+                    referenceWind = rawGusts,
+                    referenceElevation = mountain.altitude.toDouble(),
+                    targetAltitude = altitude.toDouble(),
+                    alpha = null
+                )
 
                 // Calculate 3-hour pressure drop (p3hDrop) using actual hourly index
                 val p3Idx = (idx - 3).coerceAtLeast(0)
@@ -7647,7 +7743,7 @@ fun PressureStormChart(
                                     maxLines = 1
                                 )
                                 Text(
-                                    text = "${PersianDateHelper.formatToPersianDigits(gustsVal)} km/h",
+                                    text = "${PersianDateHelper.formatToPersianDigits(gustsVal)} ک.م/س",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = gustsColor,
@@ -8093,11 +8189,13 @@ fun MountaineeringStatsSection(
     }
 
     val alpineStartLocal = remember(sunriseLocal) {
-        (sunriseLocal - 3.0 + 24.0) % 24.0
+        // همراستا با alpineReport: شروع پنجره = طلوع − ۲ ساعت
+        (sunriseLocal - 2.0 + 24.0) % 24.0
     }
 
     val alpineEndLocal = remember(sunsetLocal) {
-        (sunsetLocal - 6.0 + 24.0) % 24.0
+        // همراستا با alpineReport: پایان پنجره = غروب − ۴ ساعت
+        (sunsetLocal - 4.0 + 24.0) % 24.0
     }
 
     val currentHourLocal = remember(currentHourUTC, peakOffsetHours) {
@@ -8123,9 +8221,11 @@ fun MountaineeringStatsSection(
                 }
             }
         } else {
-            val now = java.util.Calendar.getInstance()
-            val localHour = now.get(java.util.Calendar.HOUR_OF_DAY) + now.get(java.util.Calendar.MINUTE) / 60.0
-            localHour >= 6.0 && localHour < 18.0
+            // sunTimesUTC==null فقط وقتی رخ میدهد که خود calculateSunriseSunsetUTC
+            // خطا کرده باشد؛ اینجا از آفست قله (نه منطقه دستگاه) استفاده میکنیم
+            // تا وضعیت روز/شب همیشه متعلق به قله باشد نه گوشی کاربر.
+            val peakLocalHour = (currentHourUTC + peakOffsetHours + 24.0) % 24.0
+            peakLocalHour >= 6.0 && peakLocalHour < 18.0
         }
     }
 
@@ -8298,9 +8398,16 @@ fun MountaineeringStatsSection(
     val currentWindSpeed = current.windSpeed10m ?: 0.0
     val currentWindGusts = current.windGusts10m ?: 0.0
     val currentTemp = current.temperature2m ?: 0.0
-    val isWeatherHazardInAlpine = currentWindSpeed >= 38.0 || currentWindGusts >= 55.0 || currentTemp <= -20.0
+    val currentCape = current.cape ?: hourly?.cape?.getOrNull(
+        hourly.time.indexOfFirst { it.startsWith(current.time.take(13)) }.coerceAtLeast(0)
+    ) ?: 0.0
+    // اسکیل §21: کد ۹۵ (طوفان تندری) و کدهای ۹۶/۹۹ (با تگرگ) مخاطرهی حیاتیاند
+    // حتی با باد ملایم؛ بدون این گارد، پنجره طلایی برای ساعت طوفانی «ایمن» رندر میشد.
+    val isConvectiveHazard = current.weatherCode in listOf(95, 96, 99) || currentCape >= 400.0
+    val isWeatherHazardInAlpine = currentWindSpeed >= 38.0 || currentWindGusts >= 55.0 ||
+        currentTemp <= -20.0 || isConvectiveHazard
 
-    val alpineReport = remember(sunTimesUTC, currentHourUTC, isDark, isWeatherHazardInAlpine, currentWindSpeed, currentTemp) {
+    val alpineReport = remember(sunTimesUTC, currentHourUTC, isDark, isWeatherHazardInAlpine, currentWindSpeed, currentTemp, current.weatherCode, currentCape) {
         if (sunTimesUTC == null || sunTimesUTC.isAlwaysBelow || sunTimesUTC.isAlwaysAbove) {
             val errMsg = if (sunTimesUTC == null) "محاسبه زمان‌ها با مشکل مواجه شد. لطفاً دوباره تلاش کنید." else "محاسبات فنی به علت موقعیت قطبی در دسترس نیست."
             return@remember AlpineWindowReport(
@@ -8353,7 +8460,8 @@ fun MountaineeringStatsSection(
         }
         
         if (isInside) {
-            val remainingHours = if (currentHourUTC < alpineEndUTC) alpineEndUTC - currentHourUTC else (alpineEndUTC + 24.0) - alpineStartUTC
+            // فاصله تا پایان پنجره؛ هر دو طرف با wrap-around ۲۴ ساعته سنجیده میشود
+            val remainingHours = if (currentHourUTC < alpineEndUTC) alpineEndUTC - currentHourUTC else (alpineEndUTC + 24.0) - currentHourUTC
             val rh = remainingHours.toInt()
             val rm = Math.round((remainingHours - rh) * 60.0).toInt() % 60
             val timeP = if (rh > 0) "\u200E${com.example.ui.util.PersianDateHelper.formatToPersianDigits(rh)} ساعت و \u200E${com.example.ui.util.PersianDateHelper.formatToPersianDigits(rm)} دقیقه" else "\u200E${com.example.ui.util.PersianDateHelper.formatToPersianDigits(rm)} دقیقه"
@@ -8361,8 +8469,13 @@ fun MountaineeringStatsSection(
             if (isWeatherHazardInAlpine) {
                 val pWind = com.example.ui.util.PersianDateHelper.formatToPersianDigits(currentWindSpeed.toInt())
                 val pTemp = com.example.ui.util.PersianDateHelper.formatToPersianDigits(currentTemp.toInt())
+                val hazardCause = when {
+                    isConvectiveHazard -> "خطر صاعقه و ناپایداری همرفتی (وضعیت تندری جبهه صعود)"
+                    currentWindSpeed >= 38.0 || currentWindGusts >= 55.0 -> "باد شدید ($pWind ک‌م/س)"
+                    else -> "سرمای افراطی ($pTemp°C)"
+                }
                 status = "پنجره نوری فعال اما مخاطره‌آمیز (طوفان/باد)"
-                message = "⚠️ عدم تطابق شرایط جوی با پنجره آلپاین: اگرچه از نظر زمان نوری داخل پنجره ایمن هستید، اما به دلیل باد شدید ($pWind ک‌م/س) و سرمای هوا ($pTemp°C)، صعود پرخطر است. صعود پیشنهاد نمی‌شود!"
+                message = "⚠️ عدم تطابق شرایط جوی با پنجره آلپاین: اگرچه از نظر زمان نوری داخل پنجره ایمن هستید، اما به دلیل $hazardCause، صعود پرخطر است. صعود پیشنهاد نمی‌شود!"
                 color = if (isDark) Color(0xFFFF5252) else Color(0xFFB91C1C)
             } else {
                 status = "داخل پنجره طلایی (ایمن)"
@@ -10613,11 +10726,13 @@ fun GoldenWindowSection(
 
 @Composable
 fun HourlyForecastSection(
+    viewModel: WeatherViewModel,
     hourly: com.example.data.remote.HourlyData,
     altitude: Int,
     mountain: com.example.data.local.MountainEntity,
     daily: com.example.data.remote.DailyData? = null
 ) {
+    val isPremium by viewModel.isPremium.collectAsStateWithLifecycle()
     val peakOffsetHours = remember(mountain) {
         com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
     }
@@ -10679,7 +10794,9 @@ fun HourlyForecastSection(
         }
     }
 
-    val itemsFlow = remember(hourly, altitude, mountain, todayDateStr, peakOffsetHours, statsTick, daily) {
+    // بازه‌ی نمایش: کل روز جاری (۰۰:۰۰ تا ۲۳:۵۹). کاربر رایگان فقط ۶ ساعت از
+    // زمان جاری تا پایان روز را باز می‌بیند؛ کاربر پرو کل ۲۴ ساعت روز جاری را.
+    val itemsFlow = remember(hourly, altitude, mountain, currentHourIdx, peakOffsetHours, statsTick, daily) {
         if (hourly == null || hourly.time.isEmpty()) emptyList() else {
             val dayStartIdx = hourly.time.indexOfFirst { it.startsWith(todayDateStr) }
             val startIdx = if (dayStartIdx != -1) dayStartIdx else {
@@ -10907,7 +11024,7 @@ fun HourlyForecastSection(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "هواشناسی ۲۴ ساعت آینده (ساعتی)",
+                text = "هواشناسی ساعتی (روز جاری)",
                 fontWeight = FontWeight.Black,
                 fontSize = 14.sp,
                 color = getTextColor()
@@ -10935,24 +11052,33 @@ fun HourlyForecastSection(
         ) {
             items(itemsFlow, key = { it.id }) { item ->
                 val isSelected = selectedHourIndex == item.index
+                // رایگان: فقط ۶ ساعت از زمان جاری تا پایان روز باز؛ ساعات گذشتهی
+                // امروز و ساعات +۶ به بعد قفل. پرو: کل روز جاری باز.
+                val isLocked = !isPremium && currentHourIdx >= 0 &&
+                    (item.index < currentHourIdx || (item.index - currentHourIdx) >= 6)
                 val safetyReport = remember(item, hourly, altitude, isDark, mountain, peakOffsetHours, daily) { getHourlySafetyReport(item, hourly, altitude, isDark, mountain, peakOffsetHours, daily = daily) }
-                val isPast = item.index < currentHourIdx
                 val isCurrent = item.index == currentHourIdx
-                
-                // Adaptive Background colored according to hourly safety and current theme
-                val cardThemeBgColor = remember(isSelected, safetyReport.color, isDark) {
-                    if (isSelected) {
+
+                // خانه‌های قفل‌شده: رنگ خنثی بدون رنگ‌بندی ایمنی (مطابق «رادار زمانی»)
+                val cardThemeBgColor = remember(isSelected, isLocked, safetyReport.color, isDark) {
+                    if (isLocked) {
+                        if (isDark) Color(0xFF475569).copy(alpha = 0.10f) else Color(0xFF94A3B8).copy(alpha = 0.10f)
+                    } else if (isSelected) {
                         safetyReport.color.copy(alpha = if (isDark) 0.16f else 0.24f)
                     } else {
                         safetyReport.color.copy(alpha = if (isDark) 0.04f else 0.06f)
                     }
                 }
-                
+
                 // Safe, high-contrast text and border selectors
-                val themeAccentColor = safetyReport.color
-                
-                val cardThemeBorderColor = remember(isSelected, themeAccentColor, isDark) {
-                    if (isSelected) {
+                val themeAccentColor = if (isLocked) {
+                    if (isDark) Color(0xFF475569) else Color(0xFF94A3B8)
+                } else safetyReport.color
+
+                val cardThemeBorderColor = remember(isSelected, isLocked, themeAccentColor, isDark) {
+                    if (isLocked) {
+                        if (isDark) Color(0xFF475569).copy(alpha = 0.35f) else Color(0xFF94A3B8).copy(alpha = 0.45f)
+                    } else if (isSelected) {
                         themeAccentColor
                     } else {
                         themeAccentColor.copy(alpha = if (isDark) 0.25f else 0.38f)
@@ -10963,15 +11089,18 @@ fun HourlyForecastSection(
 
                 Card(
                     modifier = Modifier
-                        .width(86.dp)
-                        .alpha(if (isPast) 0.5f else 1.0f),
+                        .width(86.dp),
                     shape = RoundedCornerShape(18.dp),
                     border = borderStroke,
                     colors = CardDefaults.cardColors(
                         containerColor = cardThemeBgColor
                     ),
                     onClick = {
-                        selectedHourIndex = item.index
+                        if (isLocked) {
+                            viewModel.triggerBilling(true)
+                        } else {
+                            selectedHourIndex = item.index
+                        }
                     }
                 ) {
                     Column(
@@ -10980,17 +11109,45 @@ fun HourlyForecastSection(
                             .padding(vertical = 12.dp, horizontal = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        if (isCurrent) {
-                            Box(
-                                modifier = Modifier
-                                    .padding(bottom = 4.dp)
-                                    .width(24.dp)
-                                    .height(3.dp)
-                                    .clip(RoundedCornerShape(100))
-                                    .background(if (isDark) Color(0xFF00E5FF) else Color(0xFF00B0FF))
-                            )
-                        } else {
-                            Spacer(modifier = Modifier.height(7.dp))
+                        // اسلات ثابت 16dp برای نشانگر — قفل/نقطه/الان ارتفاع یکسان
+                        // دارند تا همهی خانههای ساعتی هماندازه بمانند
+                        Box(
+                            modifier = Modifier.height(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            when {
+                                isCurrent -> Box(
+                                    modifier = Modifier
+                                        .width(24.dp)
+                                        .height(3.dp)
+                                        .clip(RoundedCornerShape(100))
+                                        .background(if (isDark) Color(0xFF00E5FF) else Color(0xFF00B0FF))
+                                )
+                                isLocked -> {
+                                    val lockColor = if (isDark) Color(0xFFFFD700) else Color(0xFFD97706)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(14.dp)
+                                            .clip(RoundedCornerShape(100))
+                                            .background(lockColor.copy(alpha = 0.20f))
+                                            .border(1.dp, lockColor.copy(alpha = 0.5f), RoundedCornerShape(100)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "PRO Locked",
+                                            tint = lockColor,
+                                            modifier = Modifier.size(9.dp)
+                                        )
+                                    }
+                                }
+                                else -> Box(
+                                    modifier = Modifier
+                                        .size(4.dp)
+                                        .clip(RoundedCornerShape(100))
+                                        .background(getTextColor(0.15f))
+                                )
+                            }
                         }
                         Text(
                             text = item.hourPersian,
@@ -11110,8 +11267,21 @@ fun HourlyForecastSection(
 
         Spacer(modifier = Modifier.height(14.dp))
 
+        // راهنمای قفل پرمیوم — همان الگوی «رادار زمانی پایش ریسک صعود»
+        if (!isPremium) {
+            Text(
+                text = "✨ نمایش ۶ ساعت از زمان جاری تا پایان روز رایگان است. جهت مشاهدهی کل ۲۴ ساعت روز جاری (۰۰:۰۰ تا ۲۳:۵۹) و کابین تحلیل ایمنی ساعتی، اشتراک پرو را فعال کنید.",
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (isDark) Color(0xFFFFD700) else Color(0xFFD97706),
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
         // Advanced Tactical Analyst Cockpit Panel
-        currentSelectedHour?.let { item ->
+        // برای ساعات قفل‌شده (کاربر رایگان) کابین تحلیل نمایش داده نمیشود
+        currentSelectedHour?.takeIf { isPremium || (it.index - currentHourIdx) < 6 }?.let { item ->
             val report = remember(item, hourly, altitude, isDark, mountain, peakOffsetHours) { getHourlySafetyReport(item, hourly, altitude, isDark, mountain, peakOffsetHours) }
             
             // Soft high-contrast theme colours suited matching light/dark theme perfectly
@@ -11400,7 +11570,14 @@ fun HourlyForecastSection(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         // Clouds & Visibility
-                        val cloudsLimit = if (item.cloudCoverVal > 85 || item.visibilityMeters < 1500.0) "CRITICAL" else if (item.cloudCoverVal > 50 || item.visibilityMeters < 4000.0) "WARNING" else "SAFE"
+                        // اسکیل §31: دادهی غایب (visibility=-1) ≠ دادهی خطرناک؛
+                        // بدون دادهی دید، فقط پوشش ابر ملاک رنگ‌بندی است.
+                        val hasVisData = item.visibilityMeters >= 0.0
+                        val cloudsLimit = when {
+                            item.cloudCoverVal > 85 || (hasVisData && item.visibilityMeters < 1500.0) -> "CRITICAL"
+                            item.cloudCoverVal > 50 || (hasVisData && item.visibilityMeters < 4000.0) -> "WARNING"
+                            else -> "SAFE"
+                        }
                         val cloudsStatus = getMetricStatus(cloudsLimit, isDark)
                         Card(
                             modifier = Modifier.weight(1f),
@@ -11744,7 +11921,8 @@ fun DailyForecastSection(
     mountain: com.example.data.local.MountainEntity,
     selectedDaysCount: Int,
     onDaysCountChanged: (Int) -> Unit,
-    units: com.example.data.remote.WeatherUnits? = null
+    units: com.example.data.remote.WeatherUnits? = null,
+    apiUtcOffsetSeconds: Int? = null
 ) {
     val isDark = MaterialTheme.colorScheme.background.isDark
     var expandedIndex by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -12353,6 +12531,7 @@ fun DailyForecastSection(
                                 index = i,
                                 altitude = altitude,
                                 mountain = mountain,
+                                apiUtcOffsetSeconds = apiUtcOffsetSeconds,
                                 item = item
                             )
                         }
@@ -12405,6 +12584,7 @@ fun DailyDetailExpandablePanel(
     index: Int,
     altitude: Int,
     mountain: com.example.data.local.MountainEntity,
+    apiUtcOffsetSeconds: Int? = null,
     item: CompiledDailyItem
 ) {
     val stats = remember(daily, index, altitude, mountain, item) {
@@ -12443,7 +12623,15 @@ fun DailyDetailExpandablePanel(
         val hasDaySnow = snowfallSumVal > 0.0 || (precipSumVal > 0.0 && adjTempMin <= 0.0)
         val dateStr = daily.time.getOrNull(index) ?: ""
 
-        val peakOffsetHours = com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+        // همراستا با کارت دیسپچ نجومی: اولویت با متادیتای DST-aware پاسخ Open-Meteo
+        // (resolvePeakOffset)؛ جدول اسم/مختصات فقط fallback است. بدون این، در روزهای
+        // DST اختلاف ۱ ساعته در طلوع/غروب ماه و پنجره آلپاین این پنل با بقیه اپ میافتاد.
+        val peakOffsetHours = com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+            apiUtcOffsetSeconds = apiUtcOffsetSeconds,
+            name = mountain.name,
+            latitude = mountain.latitude,
+            longitude = mountain.longitude
+        )
         val adjUvVal = MountaineeringHelper.calculateResolvedUvIndex(
             current = com.example.data.remote.CurrentWeather(
                 time = "${dateStr}T12:00",

@@ -1679,7 +1679,10 @@ object MountaineeringHelper {
         if (hourly != null && hourly.time != null && currentIdx < hourly.time.size) {
             val searchEnd = (currentIdx + 12).coerceAtMost(hourly.time.size)
             for (i in currentIdx until searchEnd) {
-                val hWind = hourly.windSpeed80m?.getOrNull(i) ?: hourly.windSpeed10m?.getOrNull(i) ?: 0.0
+                val hWindRaw = hourly.windSpeed80m?.getOrNull(i) ?: hourly.windSpeed10m?.getOrNull(i) ?: 0.0
+                // باد ۸۰م باید به تراز صعود تصحیح شود — همان زنجیرهی سنجشگرهای رادار؛
+                // بدون این، در قلل بلند موتور بازگشت ۱۰+ ک.م/س خوشبینتر از رادار قضاوت میکند.
+                val hWind = adjustWindWithAltitude(hWindRaw, 80.0, altitude.toDouble())
                 val hPrecip = hourly.precipitation?.getOrNull(i) ?: 0.0
                 val hCode = hourly.weatherCode?.getOrNull(i) ?: 0
                 val hCape = hourly.cape?.getOrNull(i) ?: 0.0
@@ -1694,7 +1697,7 @@ object MountaineeringHelper {
                     }
                     safeWindowHours = (i - currentIdx).coerceAtLeast(0)
                     hazardReason = when {
-                        hWind >= 45.0 -> "ورود باد طوفانی (${PersianDateHelper.formatToPersianDigits(hWind.toInt())}km/h)"
+                        hWind >= 45.0 -> "ورود باد طوفانی (${PersianDateHelper.formatToPersianDigits(hWind.toInt())} ک.م/س)"
                         hCape >= 500.0 -> "افزایش شدید شارژ الکتریکی و خطر صاعقه"
                         hVis < 800.0 -> "افت شدید دید افقی (وایت‌اوت)"
                         hPrecip >= 1.5 -> "آغاز بارش‌های تهاجمی"
@@ -1771,10 +1774,10 @@ object MountaineeringHelper {
         val windStr = PersianDateHelper.formatToPersianDigits(windSpeed80m.toInt())
         val gustStr = PersianDateHelper.formatToPersianDigits(gustNow.toInt())
         if (windRisk > 60 || windSpeed80m > 50.0) {
-            environmentalHazards.add("🚨 $elevTag بادهای طوفانی خط‌الرأس ($windStr ک.م/ساعت): خطر سقوط و برهم خوردن تعادل روی تیغه‌ها.")
+            environmentalHazards.add("🚨 $elevTag بادهای طوفانی خط‌الرأس ($windStr ک.م/س): خطر سقوط و برهم خوردن تعادل روی تیغه‌ها.")
             recommendationItems.add(RecommendationItem(1, "🚨 پروتکل پیمایش باد طوفانی (باد ${windStr}km/h، تندباد ${gustStr}km/h): پرهیز قطعی از صعود روی گرده‌های سنگی باریک و تیغه‌ها؛ کاهش مرکز ثقل و اتکا به جفت باتوم قفل‌شده."))
         } else if (windRisk > 25 || windSpeed80m > 25.0) {
-            environmentalHazards.add("⚠️ $elevTag جریانات شدید باد سطحی ($windStr ک.م/ساعت): نیاز به تثبیت تجهیزات و کاهش مرکز ثقل.")
+            environmentalHazards.add("⚠️ $elevTag جریانات شدید باد سطحی ($windStr ک.م/س): نیاز به تثبیت تجهیزات و کاهش مرکز ثقل.")
         }
 
         // ۶. رعدوبرق و صاعقه
@@ -1805,7 +1808,7 @@ object MountaineeringHelper {
         }
 
         // ۷. وایت‌اوت و دید صفر
-        val visStr = if (visMeters >= 1000.0) "${PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", visMeters / 1000.0))}km" else "${PersianDateHelper.formatToPersianDigits(visMeters.toInt())}m"
+        val visStr = if (visMeters >= 1000.0) "${PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", visMeters / 1000.0))} ک.م" else "${PersianDateHelper.formatToPersianDigits(visMeters.toInt())} م"
         if (whiteoutRisk > 60 || visMeters < 500.0) {
             environmentalHazards.add("🚨 $elevTag مه یخ‌بندان متراکم و وایت‌اوت (دید $visStr): خطر گم‌شدگی کامل و سقوط از پرتگاه.")
             recommendationItems.add(RecommendationItem(1, "🚨 پروتکل مسیریابی دید صفر (وایت‌اوت - دید $visStr): توقف حرکت بدون تراک GPS آنلاین/آفلاین کالیبره‌شده؛ انطباق گام‌به‌گام روی گرای قطب‌نما جهت جلوگیری از سقوط."))
@@ -1893,7 +1896,7 @@ object MountaineeringHelper {
         val hAbs = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", kotlin.math.abs(humidexVal)))
         val hSign = if (humidexVal < 0) "-" else ""
 
-        riskAssessmentBasics.add("باد تراز صعود: جریانات فشرده با سرعت ${PersianDateHelper.formatToPersianDigits(windSpeed80m.toInt())} ک.م/ساعت (تندبادهای لحظه‌ای: ${PersianDateHelper.formatToPersianDigits(gustNow.toInt())} ک.م/س).")
+        riskAssessmentBasics.add("باد تراز صعود: جریانات فشرده با سرعت ${PersianDateHelper.formatToPersianDigits(windSpeed80m.toInt())} ک.م/س (تندبادهای لحظه‌ای: ${PersianDateHelper.formatToPersianDigits(gustNow.toInt())} ک.م/س).")
         riskAssessmentBasics.add("حس حرارتی سوزباد (Wind Chill): حس سرمایی بدن حدود \u200E$appTempSign$appTempAbs°C است.")
         riskAssessmentBasics.add("افت حرارتی ارتفاع (Lapse Rate): کاهش \u200E$lapseDropSign$lapseDropAbs°C دما در صعود از تراز پایه (${PersianDateHelper.formatToPersianDigits(baseElev.toInt())}م) به تراز صعود (${PersianDateHelper.formatToPersianDigits(altitude)}م).")
         val oxRatioInt = oxygenRatio.toInt()
@@ -1910,7 +1913,7 @@ object MountaineeringHelper {
         val derivedQnh = (surfacePressure / isaRatio.pow(5.25588)).coerceIn(850.0, 1080.0)
         val qnhStr = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", derivedQnh))
 
-        riskAssessmentBasics.add("فرمول هایپسومتریک هوانوردی ICAO/WMO: محاسبه دقیق فشار/ارتفاع با لایه حرارتی T_mean و ضریب نمایی ۰.۱۹۰۲۸۴ جهت حذف خطای ۵۰ متری ارتفاعات بالای ۳۰۰۰m.")
+        riskAssessmentBasics.add("فرمول هایپسومتریک هوانوردی ICAO/WMO: محاسبه دقیق فشار/ارتفاع با لایه حرارتی T_mean و نمای نمایی ۵.۲۵۵۸۸ جهت حذف خطای ۵۰ متری ارتفاعات بالای ۳۰۰۰m.")
         riskAssessmentBasics.add("کالیبراسیون پویای سنسور (Auto-QNH): همگام‌سازی لحظه‌ای مرجع سطح دریا (QNH=$qnhStr hPa) با MSLP داده‌های Open-Meteo جهت تفکیک افت فشار ناگهانی طوفان از تغییر ارتفاع.")
         riskAssessmentBasics.add("پرتو فرابنفش خورشید (UV Index): شاخص تابش ${PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", rawUv))} UVI (تعدیل‌شده برای ارتفاع ${PersianDateHelper.formatToPersianDigits(altitude)}م و بازتاب برف).")
         riskAssessmentBasics.add("شاخص خط انجماد (Freezing Level): مرز صفر درجه حرارت در ارتفاع ${PersianDateHelper.formatToPersianDigits(freezingLevelHeight.toInt())} متر از سطح دریا است.")
@@ -1933,7 +1936,10 @@ object MountaineeringHelper {
         if (frostbiteMinutesVal != null) {
             val fbMStr = PersianDateHelper.formatToPersianDigits(frostbiteMinutesVal)
             riskAssessmentBasics.add("زمان تا یخ‌زدگی بافت پوست: حدود $fbMStr دقیقه در معرض سوزباد مستقیم!")
-            environmentalHazards.add("🥶 $elevTag هشدار سرمازدگی آنی: زمان تخریب بافت پوست تحت باد سرد حدود $fbMStr دقیقه است!")
+            // فقط وقتی هشدار شدید قبلی (🚨) صادر نشده؛ وگرنه ردیف تکراری در UI میسازد
+            if (frostbiteRisk <= 60 && apparentTemp >= -15.0) {
+                environmentalHazards.add("🥶 $elevTag هشدار سرمازدگی آنی: زمان تخریب بافت پوست تحت باد سرد حدود $fbMStr دقیقه است!")
+            }
         } else {
             riskAssessmentBasics.add("زمان تا یخ‌زدگی پوست: ریسک ناچیز سرمازدگی سریع تحت شرایط جوی جاری.")
         }
@@ -2203,10 +2209,14 @@ object MountaineeringHelper {
 
             // 4. Instantaneous Peak Wind Gusts (Dynamic gust multiplier based on CAPE convective turbulence)
             val gustFactor = if (capeNow > 500.0) 1.8 else if (capeNow > 200.0) 1.6 else 1.35
-            val gustNow = minutely15.windGusts10m?.getOrNull(activeIdx)
+            val gustNowRaw = minutely15.windGusts10m?.getOrNull(activeIdx)
                 ?: ((minutely15.windSpeed10m?.getOrNull(activeIdx) ?: 0.0) * gustFactor)
-            val gustNext = minutely15.windGusts10m?.getOrNull(activeIdx + 1)
-                ?: ((minutely15.windSpeed10m?.getOrNull(activeIdx + 1) ?: gustNow) * gustFactor)
+            val gustNextRaw = minutely15.windGusts10m?.getOrNull(activeIdx + 1)
+                ?: ((minutely15.windSpeed10m?.getOrNull(activeIdx + 1) ?: gustNowRaw) * gustFactor)
+            // تصحیح ارتفاع تندباد به تراز صعود — همسو با چیپهای رادار و سایر سنجشگرها.
+            // مرجع: دیتای minutely15 در تراز قله است (تولیدشده از مدل ساعتی قله).
+            val gustNow = adjustWindWithAltitude(gustNowRaw, altitude.toDouble(), altitude.toDouble(), alpha = null)
+            val gustNext = adjustWindWithAltitude(gustNextRaw, altitude.toDouble(), altitude.toDouble(), alpha = null)
             val peakWindGust = max(gustNow, gustNext)
             
             val instantaneousWindLabel = if (peakWindGust >= 35.0) {
@@ -2277,13 +2287,11 @@ object MountaineeringHelper {
                 else -> rawRiskLevel
             }
             
-            // 6. Dynamic Confidence Index Computation
+            // 6. Confidence Index — فقط بر اساس «منبع داده»، نه یک منحنی ساختگی وابسته به
+            // ایندکس اسلات. مناطق رادار مستقیم: ۹۰٪؛ درون‌یابی ساعتی: ۸۰٪ (طبق §7 اسکیل:
+            // خارج از پوشش رادار، داده ۱۵دقیقهای فقط درون‌یابی است و اعتماد واقعی کمتر است).
             val isNativeHighRes = isMinutely15NativeHighResolution(latitude, longitude)
-            val confidencePct = if (isNativeHighRes) {
-                (96 - (activeIdx % 8) * 2).coerceIn(88, 96)
-            } else {
-                (90 - (activeIdx % 6) * 2).coerceIn(82, 90)
-            }
+            val confidencePct = if (isNativeHighRes) 90 else 80
             val pConf = PersianDateHelper.formatToPersianDigits(confidencePct)
             val confLabel = if (isNativeHighRes) {
                 "$pConf٪ (پایش مستقیم رادار و ماهواره High-Res)"

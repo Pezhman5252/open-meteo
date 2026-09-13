@@ -1365,10 +1365,10 @@ fun SettingsScreen(
                                 modifier = Modifier
                                     .weight(1f)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(if (lastAddedCount > 0) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.02f))
+                                    .background(if (lastAddedCount > 0) (if (isDarkTheme) Color(0xFF1B3324) else Color(0xFFE8F5E9)) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.02f))
                                     .border(
                                         1.dp,
-                                        if (lastAddedCount > 0) Color(0xFFC8E6C9) else MaterialTheme.colorScheme.outline.copy(alpha = 0.05f),
+                                        if (lastAddedCount > 0) (if (isDarkTheme) Color(0xFF2E7D46).copy(alpha = 0.5f) else Color(0xFFC8E6C9)) else MaterialTheme.colorScheme.outline.copy(alpha = 0.05f),
                                         RoundedCornerShape(12.dp)
                                     )
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -1379,7 +1379,7 @@ fun SettingsScreen(
                                     modifier = Modifier
                                         .size(6.dp)
                                         .clip(RoundedCornerShape(100))
-                                        .background(if (lastAddedCount > 0) Color(0xFF30D158) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                                        .background(if (lastAddedCount > 0) (if (isDarkTheme) Color(0xFF4ADE80) else Color(0xFF30D158)) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
@@ -1387,7 +1387,7 @@ fun SettingsScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (lastAddedCount > 0) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = if (lastAddedCount > 0) (if (isDarkTheme) Color(0xFF86EFAC) else Color(0xFF2E7D32)) else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
 
@@ -1395,10 +1395,10 @@ fun SettingsScreen(
                                 modifier = Modifier
                                     .weight(1f)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(if (lastUpdatedCount > 0) Color(0xFFE3F2FD) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.02f))
+                                    .background(if (lastUpdatedCount > 0) (if (isDarkTheme) Color(0xFF16283A) else Color(0xFFE3F2FD)) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.02f))
                                     .border(
                                         1.dp,
-                                        if (lastUpdatedCount > 0) Color(0xFFBBDEFB) else MaterialTheme.colorScheme.outline.copy(alpha = 0.05f),
+                                        if (lastUpdatedCount > 0) (if (isDarkTheme) Color(0xFF1E5A8A).copy(alpha = 0.5f) else Color(0xFFBBDEFB)) else MaterialTheme.colorScheme.outline.copy(alpha = 0.05f),
                                         RoundedCornerShape(12.dp)
                                     )
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -1409,7 +1409,7 @@ fun SettingsScreen(
                                     modifier = Modifier
                                         .size(6.dp)
                                         .clip(RoundedCornerShape(100))
-                                        .background(if (lastUpdatedCount > 0) Color(0xFF1976D2) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                                        .background(if (lastUpdatedCount > 0) (if (isDarkTheme) Color(0xFF60A5FA) else Color(0xFF1976D2)) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
@@ -1417,7 +1417,7 @@ fun SettingsScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (lastUpdatedCount > 0) Color(0xFF1565C0) else MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = if (lastUpdatedCount > 0) (if (isDarkTheme) Color(0xFF93C5FD) else Color(0xFF1565C0)) else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -1683,10 +1683,10 @@ fun SettingsScreen(
                     val features = remember {
                         listOf(
                             FeatureItem(
-                                title = "پیش‌بینی نقطه‌ای جبهه‌های صعود قله",
-                                subtitle = "تحلیل مجزای ترازهای ارتفاعی و تفاوت سوزباد جبهه‌های جغرافیایی",
+                                title = "پیش‌بینی نقطه‌ای ترازهای صعود قله",
+                                subtitle = "تحلیل مجزای ترازهای ارتفاعی از کمپ اصلی تا کاسه قله با اکسیژن موثر و سوزباد هر تراز",
                                 badge = "تخصصی و امنیتی 🏔️",
-                                detail = "این سیستم منحصر‌به‌فرد، هواشناسی قله را نه به صورت یک کلیت، بلکه بر اساس ترازهای ارتفاعی مختلف (از کمپ اصلی تا جان‌پناه و کاسه قله) و در چهار جبهه جغرافیایی اصلی تحلیل می‌کند. سرعت باد، دمای محسوس (سوزباد) و شانس بارش در جبهه شمالی همواره با جبهه جنوبی تفاوت دارد؛ با این قابلیت مسیر صعود خود را بر اساس دقیق‌ترین داده‌های جبهه‌ای انتخاب کنید تا ضامن سلامت تیم شما باشد.",
+                                detail = "هواشناسی قله به صورت یک کلیت ارائه نمی‌شود؛ بلکه بر اساس ترازهای ارتفاعی مختلف (از کمپ اصلی تا جان‌پناه و کاسه قله) به تفکیک تحلیل می‌شود. دما، سوزباد، اکسیژن موثر و ریسک یخبندان در هر تراز جداگانه محاسبه و رنگبندی ایمنی می‌شود تا تصمیم صعود بر اساس دقیق‌ترین وضعیت همان تراز گرفته شود و ضامن سلامت تیم شما باشد.",
                                 icon = Icons.Default.Cloud,
                                 color = Color(0xFF0284C7)
                             ),
@@ -1694,23 +1694,23 @@ fun SettingsScreen(
                                 title = "رادار ارزیابی ریسک و بحران‌های آلپاین",
                                 subtitle = "سامانه هوشمند پایش صاعقه، بوران و افت ناگهانی فشار در خط‌الرأس",
                                 badge = "پایش هوشمند آنی ⚡",
-                                detail = "پیش از لمس طوفان، رادار بحران به کمک الگوریتم‌های اختصاصی ایمنی صعود، پارامترهای جوی را پایش می‌کند. در صورتی که احتمال وقوع رعدوبرق (صاعقه در خط‌الرأس)، افت دید افقی زیر ۵۰ متر، یا دمای محسوس زیر منفی ۲۵ درجه باشد، بلافاصله هشدارهای قرمز صادر می‌کند. این رادار تفاوت بین یک صعود موفق و یک وضعیت بقا در کوهستان را رقم می‌زند.",
+                                detail = "پیش از لمس طوفان، رادار بحران به کمک الگوریتم‌های اختصاصی ایمنی صعود، پارامترهای جوی را پایش می‌کند. در صورت احتمال وقوع صاعقه در خط‌الرأس (CAPE بالا)، افت شدید دید افقی (وایت‌اوت) یا دمای محسوس خطرناک (سوزباد زیر منفی ۱۵ درجه)، بلافاصله هشدارهای قرمز صادر می‌کند. این رادار تفاوت بین یک صعود موفق و یک وضعیت بقا در کوهستان را رقم می‌زند.",
                                 icon = Icons.Default.Warning,
                                 color = Color(0xFFDC2626)
                             ),
                             FeatureItem(
-                                title = "شبیه‌ساز هوشمند ترازهای ارتفاعی (Lapse Rate)",
-                                subtitle = "محاسبه افت دما، رقت هوا و فشار اتمسفر در ارتفاعات بالای ۴۰۰۰ متر",
+                                title = "شبیه‌ساز ترازهای ارتفاعی قله (Lapse Rate)",
+                                subtitle = "محاسبه افت دما، رقت هوا و فشار اتمسفر در هر تراز صعود از کمپ تا قله",
                                 badge = "آنالیز ارتفاع 📈",
-                                detail = "ابزار هوشمند برای بررسی تغییرات فیزیکی جو در ترازهای مختلف ارتفاعی. با افزایش ارتفاع، دما به طور میانگین به ازای هر ۱۰۰۰ متر ۶.۵ درجه کاهش یافته و فشار هوا دچار افت شدیدی می‌شود. این شبیه‌ساز با محاسبه ترازهای مختلف (۲۰۰۰م، ۳۰۰۰م، ۴۰۰۰م) و اعمال ضریب سوزباد، دمای واقعی روی تیغه‌ها و قله را بازسازی می‌کند تا پیش از صعود، تجهیزات مناسب (پَر، گورتکس) را آماده سازید.",
+                                detail = "ابزار هوشمند برای بررسی تغییرات فیزیکی جو در ترازهای مختلف ارتفاعی. با افزایش ارتفاع، دما به طور میانگین به ازای هر ۱۰۰۰ متر ۶.۵ درجه کاهش یافته و فشار هوا دچار افت شدیدی می‌شود. این شبیه‌ساز دمای واقعی، اکسیژن موثر، فشار و تندباد را روی تیغه‌ها و قله بازسازی می‌کند تا پیش از صعود، تجهیزات مناسب (پَر، گورتکس) را آماده سازید.",
                                 icon = Icons.Default.Bolt,
                                 color = Color(0xFF8B5CF6)
                             ),
                             FeatureItem(
-                                title = "سامانه ۱۰۰٪ آفلاین بقاء در ارتفاعات",
-                                subtitle = "ذخیره‌سازی پایدار تمام لایه‌های جوی در حافظه محلی برای نبود آنتن",
+                                title = "سامانه آفلاین اطلس و مسیرهای صعود",
+                                subtitle = "ذخیره‌سازی بومی قله‌ها، مسیرها و قله‌های سفارشی شما در حافظه دستگاه",
                                 badge = "بدون نیاز به شبکه 📴",
-                                detail = "در اعماق دره‌ها و بر فراز تیغه‌های سرد که آنتن‌دهی موبایل به صفر می‌رسد، «صعود» همچنان فعال است. آخرین داده‌های پیش‌بینی، جزئیات ارتفاعات، و اطلاعات اطلس به صورت فشرده در دیتابیس محلی (Room) دستگاه ذخیره می‌شوند. بدون نیاز به سیگنال، می‌توانید به جدول پیش‌بینی روزهای آینده و اطلاعات حیاتی دسترسی کامل داشته باشید.",
+                                detail = "در اعماق دره‌ها و بر فراز تیغه‌های سرد که آنتن‌دهی موبایل به صفر می‌رسد، اطلس کامل قله‌ها، مسیرهای ثبت‌شده و نقاط سفارشی شما همیشه در دسترس‌اند؛ چرا که این داده‌ها به صورت فشرده در دیتابیس محلی (Room) دستگاه ذخیره می‌شوند. داده‌های پیش‌بینی زنده به اینترنت نیاز دارند، اما اطلاعات ناوبری و ارتفاعی همواره آفلاین در دسترس است.",
                                 icon = Icons.Default.WifiOff,
                                 color = Color(0xFF0D9488)
                             ),
@@ -1991,12 +1991,12 @@ fun SettingsScreen(
                         modifier = Modifier.padding(top = 6.dp)
                     ) {
                         listOf(
-                            "پشتیبانی آفلاین ۱۰۰ درصد از جبهه‌ها و ذخیره‌سازی محلی داده‌ها",
+                            "ذخیره‌سازی بومی اطلس قله‌ها، مسیرها و تنظیمات — همیشه بدون اینترنت در دسترس",
                             "رعایت نسبت کنتراست شدید (بالای ۵:۱) جهت وضوح زیر نور خورشید بالا",
-                            "رابط کاربری جاده‌ای بهینه با لبه‌های امن بزرگ جهت کاربری با دستکش",
+                            "رابط کاربری بهینه با لبه‌های امن بزرگ جهت کاربری با دستکش",
                             "قلم یکپارچه Vazirmatn همراه با اعداد فارسی اختصاصی کالیبره شده",
-                            "پایبندی کامل به سایز فونت بهینه ملیلة کوهستان (حداقل ۱۲ اس‌پی)",
-                            "بدون قطعی و کرش حین تحلیل جبهه‌های هوایی غیر همگن"
+                            "حداقل اندازه ۸ اس‌پی برای برچسب‌های ثانویه و ۱۰ اس‌پی برای داده‌های اصلی",
+                            "مدیریت خطای لایه‌های ناهمگن داده بدون توقف رابط کاربری (اعتبارسنجی + جایگزین)"
                         ).forEach { spec ->
                             Row(
                                 verticalAlignment = Alignment.Top,
