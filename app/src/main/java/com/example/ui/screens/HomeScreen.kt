@@ -1283,7 +1283,8 @@ fun HomeScreenContent(
                             hourly = hourly,
                             altitude = activeAltitude,
                             mountain = mountain,
-                            daily = weather.daily
+                            daily = weather.daily,
+                            apiUtcOffsetSeconds = weather.utcOffsetSeconds
                         )
                     }
                 }
@@ -1297,7 +1298,8 @@ fun HomeScreenContent(
                         altitude = activeAltitude,
                         mountain = mountain,
                         selectedDaysCount = goldenWindowDaysCount,
-                        onDaysCountChanged = { days -> viewModel.setGoldenWindowDaysCount(days) }
+                        onDaysCountChanged = { days -> viewModel.setGoldenWindowDaysCount(days) },
+                        apiUtcOffsetSeconds = weather.utcOffsetSeconds
                     )
                 }
 
@@ -3155,7 +3157,8 @@ fun MountainHeroCard(
                                     targetAltitude = step,
                                     mountainName = mountain.name,
                                     lat = mountain.latitude,
-                                    lon = mountain.longitude
+                                    lon = mountain.longitude,
+                                    apiUtcOffsetSeconds = weather.utcOffsetSeconds
                                 )
                                 // زنجیرهی آفست استاندارد — قلل DSTدار هم ۱ ساعت خطا نمیگیرند
                                 val offsetHours = com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
@@ -3885,8 +3888,14 @@ fun ClimbingSafetyCard(
         }
     }
 
-    val mainReport = remember(current, hourly, daily, altitude, mountain, minutely15, units, timeTick) {
-        val offsetHours = com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+    val mainReport = remember(current, hourly, daily, altitude, mountain, minutely15, units, timeTick, apiUtcOffsetSeconds) {
+        // زنجیرهی آفست استاندارد — متادیتای DST-aware پاسخ Open-Meteo اولویت دارد
+        val offsetHours = com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+            apiUtcOffsetSeconds = apiUtcOffsetSeconds,
+            name = mountain.name,
+            latitude = mountain.latitude,
+            longitude = mountain.longitude
+        )
         
         val adjMainCurrent = MountaineeringHelper.createAdjustedCurrentWeatherForAltitude(
             cur = current,
@@ -3895,7 +3904,8 @@ fun ClimbingSafetyCard(
             targetAltitude = altitude,
             mountainName = mountain.name,
             lat = mountain.latitude,
-            lon = mountain.longitude
+            lon = mountain.longitude,
+            apiUtcOffsetSeconds = apiUtcOffsetSeconds
         )
 
         MountaineeringHelper.evaluateSafety(
@@ -3996,7 +4006,8 @@ fun ClimbingSafetyCard(
                     targetAltitude = altitude,
                     mountainName = mountain.name,
                     lat = mountain.latitude,
-                    lon = mountain.longitude
+                    lon = mountain.longitude,
+                    apiUtcOffsetSeconds = apiUtcOffsetSeconds
                 ) else com.example.data.remote.CurrentWeather(
                     time = timeString,
                     temperature2m = adjTemp,
@@ -6781,7 +6792,8 @@ fun CurrentWeatherSection(
                 hourly = hourly,
                 altitude = altitude,
                 mountain = mountain,
-                current = current
+                current = current,
+                apiUtcOffsetSeconds = apiUtcOffsetSeconds
             )
 
             Spacer(modifier = Modifier.height(18.dp))
@@ -7005,6 +7017,7 @@ fun PressureStormChart(
     altitude: Int,
     mountain: MountainEntity,
     current: com.example.data.remote.CurrentWeather,
+    apiUtcOffsetSeconds: Int? = null,
     modifier: Modifier = Modifier
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -7019,9 +7032,9 @@ fun PressureStormChart(
     val isDark = MaterialTheme.colorScheme.background.isDark
     
     // همراستا با زنجیرهی آفست استاندارد اپ (resolvePeakOffset) — متادیتای DST-aware
-    val offsetHours = remember(mountain.name, mountain.latitude, mountain.longitude) {
+    val offsetHours = remember(mountain.name, mountain.latitude, mountain.longitude, apiUtcOffsetSeconds) {
         com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
-            apiUtcOffsetSeconds = null, // چارت به متادیتای پاسخ دسترسی مستقیم ندارد؛ جدول قلل fallback است
+            apiUtcOffsetSeconds = apiUtcOffsetSeconds,
             name = mountain.name,
             latitude = mountain.latitude,
             longitude = mountain.longitude
@@ -10253,13 +10266,20 @@ fun GoldenWindowSection(
     altitude: Int,
     mountain: com.example.data.local.MountainEntity,
     selectedDaysCount: Int,
-    onDaysCountChanged: (Int) -> Unit
+    onDaysCountChanged: (Int) -> Unit,
+    apiUtcOffsetSeconds: Int? = null
 ) {
     val isDark = MaterialTheme.colorScheme.background.isDark
     val isPremium by viewModel.isPremium.collectAsStateWithLifecycle()
 
-    val peakOffsetHours = remember(mountain) {
-        com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+    val peakOffsetHours = remember(mountain, apiUtcOffsetSeconds) {
+        // زنجیرهی آفست استاندارد — متادیتای DST-aware پاسخ Open-Meteo اولویت دارد
+        com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+            apiUtcOffsetSeconds = apiUtcOffsetSeconds,
+            name = mountain.name,
+            latitude = mountain.latitude,
+            longitude = mountain.longitude
+        )
     }
 
     var statsTick by remember { mutableStateOf(System.currentTimeMillis() / 60000L) }
@@ -10730,11 +10750,18 @@ fun HourlyForecastSection(
     hourly: com.example.data.remote.HourlyData,
     altitude: Int,
     mountain: com.example.data.local.MountainEntity,
-    daily: com.example.data.remote.DailyData? = null
+    daily: com.example.data.remote.DailyData? = null,
+    apiUtcOffsetSeconds: Int? = null
 ) {
     val isPremium by viewModel.isPremium.collectAsStateWithLifecycle()
-    val peakOffsetHours = remember(mountain) {
-        com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+    val peakOffsetHours = remember(mountain, apiUtcOffsetSeconds) {
+        // زنجیرهی آفست استاندارد — متادیتای DST-aware پاسخ Open-Meteo اولویت دارد
+        com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+            apiUtcOffsetSeconds = apiUtcOffsetSeconds,
+            name = mountain.name,
+            latitude = mountain.latitude,
+            longitude = mountain.longitude
+        )
     }
 
     var statsTick by remember { mutableStateOf(System.currentTimeMillis() / 60000L) }
@@ -11928,8 +11955,14 @@ fun DailyForecastSection(
     var expandedIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     val isPremium by viewModel.isPremium.collectAsStateWithLifecycle()
 
-    val peakOffsetHours = remember(mountain) {
-        com.example.ui.util.AstronomicalCalculator.getStandardTimezoneOffset(mountain.name, mountain.latitude, mountain.longitude)
+    val peakOffsetHours = remember(mountain, apiUtcOffsetSeconds) {
+        // زنجیرهی آفست استاندارد — متادیتای DST-aware پاسخ Open-Meteo اولویت دارد
+        com.example.ui.util.AstronomicalCalculator.resolvePeakOffset(
+            apiUtcOffsetSeconds = apiUtcOffsetSeconds,
+            name = mountain.name,
+            latitude = mountain.latitude,
+            longitude = mountain.longitude
+        )
     }
 
     var statsTick by remember { mutableStateOf(System.currentTimeMillis() / 60000L) }

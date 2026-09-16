@@ -487,7 +487,8 @@ object MountaineeringHelper {
         targetAltitude: Int,
         mountainName: String,
         lat: Double,
-        lon: Double
+        lon: Double,
+        apiUtcOffsetSeconds: Int? = null
     ): com.example.data.remote.CurrentWeather {
         val diff = mountainAltitude - targetAltitude
         val tempAtStep = cur.temperature2m + (diff * 0.0065)
@@ -540,7 +541,14 @@ object MountaineeringHelper {
             alpha = windAlpha
         )
 
-        val offsetHours = AstronomicalCalculator.getStandardTimezoneOffset(mountainName, lat, lon)
+        // زنجیرهی آفست استاندارد: متادیتای DST-aware پاسخ Open-Meteo اولویت دارد،
+        // جدول اسم/مختصات فقط fallback (به‌جای حدس هاردکد)
+        val offsetHours = AstronomicalCalculator.resolvePeakOffset(
+            apiUtcOffsetSeconds = apiUtcOffsetSeconds,
+            name = mountainName,
+            latitude = lat,
+            longitude = lon
+        )
         val currentHourIdx = findHourlyIndexForCurrent(cur, hourly, offsetHours)
         val fallbackVisibility = hourly?.visibility?.getOrNull(currentHourIdx)
         val fallbackCloudCover = hourly?.cloudCover?.getOrNull(currentHourIdx)?.toDouble()
@@ -1680,9 +1688,11 @@ object MountaineeringHelper {
             val searchEnd = (currentIdx + 12).coerceAtMost(hourly.time.size)
             for (i in currentIdx until searchEnd) {
                 val hWindRaw = hourly.windSpeed80m?.getOrNull(i) ?: hourly.windSpeed10m?.getOrNull(i) ?: 0.0
-                // باد ۸۰م باید به تراز صعود تصحیح شود — همان زنجیرهی سنجشگرهای رادار؛
-                // بدون این، در قلل بلند موتور بازگشت ۱۰+ ک.م/س خوشبینتر از رادار قضاوت میکند.
-                val hWind = adjustWindWithAltitude(hWindRaw, 80.0, altitude.toDouble())
+                // باد ۸۰م دادهی ساعتی در تراز قله (جای fetch مدل) است؛ انتقال به تراز فعلی
+                // کاربر با همان قانون توان MSL که بقیه سنجشگرها استفاده میکنند.
+                // (مرجع قبلی ۸۰ متر سطحی، نسبت ۷۰ برابری ساختگی میساخت و باد را تا ۸۰٪
+                // قوی‌تر از واقعیت میخواند؛ در تراز پایه همواره هشدارهای کاذب میزد)
+                val hWind = adjustWindWithAltitude(hWindRaw, summitElevation ?: altitude.toDouble(), altitude.toDouble())
                 val hPrecip = hourly.precipitation?.getOrNull(i) ?: 0.0
                 val hCode = hourly.weatherCode?.getOrNull(i) ?: 0
                 val hCape = hourly.cape?.getOrNull(i) ?: 0.0
@@ -2001,7 +2011,8 @@ object MountaineeringHelper {
             overallStatus = finalStatus,
             maxIndividualRisk = maxIndividualRisk,
             latitude = latitude,
-            longitude = longitude
+            longitude = longitude,
+            peakElevation = summitElevation
         )
 
         val isNativeHighRes = isMinutely15NativeHighResolution(latitude, longitude)
@@ -2115,7 +2126,8 @@ object MountaineeringHelper {
         overallStatus: SafetyStatus = SafetyStatus.GREEN,
         maxIndividualRisk: Int = 0,
         latitude: Double? = null,
-        longitude: Double? = null
+        longitude: Double? = null,
+        peakElevation: Double? = null
     ): SafetyReportMinutelyRisk {
         val times = minutely15?.time
         if (!times.isNullOrEmpty()) {
@@ -2213,10 +2225,16 @@ object MountaineeringHelper {
                 ?: ((minutely15.windSpeed10m?.getOrNull(activeIdx) ?: 0.0) * gustFactor)
             val gustNextRaw = minutely15.windGusts10m?.getOrNull(activeIdx + 1)
                 ?: ((minutely15.windSpeed10m?.getOrNull(activeIdx + 1) ?: gustNowRaw) * gustFactor)
-            // تصحیح ارتفاع تندباد به تراز صعود — همسو با چیپهای رادار و سایر سنجشگرها.
-            // مرجع: دیتای minutely15 در تراز قله است (تولیدشده از مدل ساعتی قله).
-            val gustNow = adjustWindWithAltitude(gustNowRaw, altitude.toDouble(), altitude.toDouble(), alpha = null)
-            val gustNext = adjustWindWithAltitude(gustNextRaw, altitude.toDouble(), altitude.toDouble(), alpha = null)
+            // تصحیح ارتفاع تندباد به تراز انتخابی کاربر: دادهی minutely15 در تراز
+            // دریافت مدل (= قله) تولید شده است؛ اگر تراز فعلی متفاوت است، با همان
+            // قانون توان MSL انتقال مییابد. بدون peakElevation (مرجع = تراز فعلی)
+            // تغییری لازم نیست.
+            val gustNow = if (peakElevation != null && peakElevation > 0.0 && peakElevation != altitude.toDouble()) {
+                adjustWindWithAltitude(gustNowRaw, peakElevation, altitude.toDouble())
+            } else gustNowRaw
+            val gustNext = if (peakElevation != null && peakElevation > 0.0 && peakElevation != altitude.toDouble()) {
+                adjustWindWithAltitude(gustNextRaw, peakElevation, altitude.toDouble())
+            } else gustNextRaw
             val peakWindGust = max(gustNow, gustNext)
             
             val instantaneousWindLabel = if (peakWindGust >= 35.0) {
