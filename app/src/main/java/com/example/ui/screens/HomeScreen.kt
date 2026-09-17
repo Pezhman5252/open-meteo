@@ -33,7 +33,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
-import kotlinx.coroutines.isActive
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -66,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.example.data.local.MountainEntity
 import com.example.data.remote.WeatherResponse
 import com.example.data.remote.HourlyData
@@ -835,6 +835,45 @@ fun OfflineBanner(offlineTime: String?) {
     }
 }
 
+/**
+ * A single shared wall-clock "minute tick" for the home screen.
+ *
+ * Returns the current epoch-minute. The value changes only when a minute
+ * boundary is crossed (at most once per real minute), so any
+ * `remember(..., minuteTick, ...)` block that includes it in its keys
+ * re-executes at most once per minute — not once per recomposition, and not
+ * via N independent timers.
+ *
+ * This replaces six separate `while (coroutineContext.isActive) {
+ * delay(delayToNextMinute); tick++ }` loops (one per home-screen section)
+ * with a single lifecycle-aware timer:
+ *   • One wake-up per minute instead of six.
+ *   • Stops while the app is not STARTED (background / screen off), so it
+ *     consumes zero CPU/battery when the user has the app open but idle.
+ *
+ * Create ONCE (in [HomeScreenContent]) and pass the returned [Long] down to
+ * the section composables; do NOT call this inside each section (that would
+ * re-create independent timers).
+ */
+@Composable
+fun rememberMinuteTick(): Long {
+    val tick = remember { androidx.compose.runtime.mutableStateOf(System.currentTimeMillis() / 60000L) }
+    val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        // Runs only while the app is at least STARTED (visible / screen on);
+        // cancelled + restarted automatically around lifecycle changes, so the
+        // per-minute wake-up costs zero battery in the background or screen-off.
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                kotlinx.coroutines.delay(60000L - (now % 60000L))
+                tick.value = System.currentTimeMillis() / 60000L
+            }
+        }
+    }
+    return tick.value
+}
+
 @Composable
 fun HomeScreenContent(
     viewModel: WeatherViewModel,
@@ -853,6 +892,11 @@ fun HomeScreenContent(
     val goldenWindowDaysCount by viewModel.goldenWindowDaysCount.collectAsStateWithLifecycle()
     val isPremium by viewModel.isPremium.collectAsStateWithLifecycle()
     val peakTemp = weather.current?.temperature2m ?: 0.0
+
+    // ONE shared minute clock for every section on this screen (replaces six
+    // independent per-section timers — see rememberMinuteTick). Lifecycle-aware:
+    // it pauses while the app is in the background.
+    val minuteTick = rememberMinuteTick()
 
     var isRefreshing by remember { mutableStateOf(false) }
     // Distinguishes WHICH trigger started the refresh: the drag gesture shows the pull
@@ -1223,6 +1267,7 @@ fun HomeScreenContent(
                         isPremium = isPremium,
                         isOffline = isOffline,
                         isRefreshing = isRefreshing,
+                        minuteTick = minuteTick,
                         onAltitudeSelected = { alt -> viewModel.setSelectedAltitude(alt) },
                         onChangeClick = onChangePeakClick,
                         onPinToggle = { handleTogglePin(mountain) },
@@ -1243,7 +1288,8 @@ fun HomeScreenContent(
                             minutely15 = weather.minutely15,
                             units = weather.hourlyUnits,
                             daily = weather.daily,
-                            apiUtcOffsetSeconds = weather.utcOffsetSeconds
+                            apiUtcOffsetSeconds = weather.utcOffsetSeconds,
+                            minuteTick = minuteTick
                         )
                     }
                 }
@@ -1270,7 +1316,8 @@ fun HomeScreenContent(
                             daily = weather.daily,
                             hourly = weather.hourly,
                             mountain = mountain,
-                            apiUtcOffsetSeconds = weather.utcOffsetSeconds
+                            apiUtcOffsetSeconds = weather.utcOffsetSeconds,
+                            minuteTick = minuteTick
                         )
                     }
                 }
@@ -1284,7 +1331,8 @@ fun HomeScreenContent(
                             altitude = activeAltitude,
                             mountain = mountain,
                             daily = weather.daily,
-                            apiUtcOffsetSeconds = weather.utcOffsetSeconds
+                            apiUtcOffsetSeconds = weather.utcOffsetSeconds,
+                            minuteTick = minuteTick
                         )
                     }
                 }
@@ -1299,7 +1347,8 @@ fun HomeScreenContent(
                         mountain = mountain,
                         selectedDaysCount = goldenWindowDaysCount,
                         onDaysCountChanged = { days -> viewModel.setGoldenWindowDaysCount(days) },
-                        apiUtcOffsetSeconds = weather.utcOffsetSeconds
+                        apiUtcOffsetSeconds = weather.utcOffsetSeconds,
+                        minuteTick = minuteTick
                     )
                 }
 
@@ -1315,7 +1364,8 @@ fun HomeScreenContent(
                             selectedDaysCount = selectedDaysCount,
                             onDaysCountChanged = { days -> viewModel.setDailyForecastDaysCount(days) },
                             units = weather.hourlyUnits,
-                            apiUtcOffsetSeconds = weather.utcOffsetSeconds
+                            apiUtcOffsetSeconds = weather.utcOffsetSeconds,
+                            minuteTick = minuteTick
                         )
                     }
                 }
@@ -1983,6 +2033,7 @@ fun MountainHeroCard(
     isPremium: Boolean,
     isOffline: Boolean = false,
     isRefreshing: Boolean = false,
+    minuteTick: Long = 0L,
     onAltitudeSelected: (Int) -> Unit,
     onChangeClick: () -> Unit,
     onPinToggle: () -> Unit,
@@ -2012,15 +2063,10 @@ fun MountainHeroCard(
         label = "favorite_scale"
     )
 
-    var tick by remember { mutableStateOf(0) }
-    LaunchedEffect(mountain) {
-        while (coroutineContext.isActive) {
-            val now = System.currentTimeMillis()
-            val delayToNextMinute = 60000L - (now % 60000L)
-            kotlinx.coroutines.delay(delayToNextMinute)
-            tick++
-        }
-    }
+    // Shared minute clock (passed from HomeScreenContent) — drives the live
+    // "peak local time" readout and the nowcast/forecast badge without this
+    // card running its own timer.
+    val tick = minuteTick
     val peakLocalTimeText = remember(mountain, tick, weather.utcOffsetSeconds) {
         try {
             // Prefer the DST-aware offset from the Open-Meteo API response; fall back to standard-time estimate.
@@ -3097,54 +3143,77 @@ fun MountainHeroCard(
                         val isSelected = step == activeAltitude
                         val isSummit = step == mountain.altitude
 
+                        // ── Per-step physical metrics ─────────────────────────────
+                        // Every one of these is a (somewhat) expensive physics call
+                        // (barometric pressure, wind power-law, humidity scaling,
+                        // apparent temperature) and is a PURE function of
+                        // (step, weather.current, mountain, peak*). Memoize each in
+                        // remember() so scrolling / the per-minute clock / parent
+                        // recompositions do NOT force a full recompute for every
+                        // visible altitude chip. Behaviour is identical to the
+                        // original per-composition computation — only the
+                        // re-computation cost moves off the scroll path.
                         // Calculate temperature at this step
-                        val diff = mountain.altitude - step
-                        val tempAtStep = peakTemp + (diff * 0.0065)
-
-                        // ✅ Wind with Power Law (same worst-case floor as the hero readout for consistency)
-                        val estWindAtStep = maxOf(
-                            MountaineeringHelper.adjustWindWithAltitude(
-                                referenceWind = peakWind80m,
-                                referenceElevation = mountain.altitude.toDouble(),
-                                targetAltitude = step.toDouble(),
-                                alpha = null
-                            ),
-                            baseWind10m
-                        )
-
-                        val cur = weather.current
-                        val qnhVal = cur?.pressureMsl ?: 1013.25
-                        val estPressureAtStep = if (cur != null) {
-                            MountaineeringHelper.calculateBarometricPressure(
-                                basePressure = cur.surfacePressure,
-                                baseTemp = cur.temperature2m,
-                                baseAltitude = mountain.altitude,
-                                targetAltitude = step,
-                                targetTemp = tempAtStep,
-                                qnh = qnhVal
-                            )
-                        } else {
-                            1013.25 * Math.pow(1.0 - 0.0000225577 * step, 5.25588)
+                        val tempAtStep = remember(step, peakTemp, mountain.altitude) {
+                            peakTemp + ((mountain.altitude - step) * 0.0065)
                         }
 
-                        val estHumidityAtStep = MountaineeringHelper.adjustHumidityWithAltitude(
-                            baseHumidity = (cur?.relativeHumidity2m ?: 50.0).toDouble(),
-                            baseTemp = peakTemp,
-                            basePressure = cur?.surfacePressure ?: MountaineeringHelper.calculateBarometricPressure(null, peakTemp, mountain.altitude, mountain.altitude, qnh = qnhVal),
-                            targetTemp = tempAtStep,
-                            targetPressure = estPressureAtStep
-                        )
+                        // ✅ Wind with Power Law (same worst-case floor as the hero readout for consistency)
+                        val estWindAtStep = remember(step, peakWind80m, baseWind10m, mountain.altitude) {
+                            maxOf(
+                                MountaineeringHelper.adjustWindWithAltitude(
+                                    referenceWind = peakWind80m,
+                                    referenceElevation = mountain.altitude.toDouble(),
+                                    targetAltitude = step.toDouble(),
+                                    alpha = null
+                                ),
+                                baseWind10m
+                            )
+                        }
+
+                        val estPressureAtStep = remember(step, tempAtStep, weather.current, mountain.altitude) {
+                            val cur = weather.current
+                            val qnhVal = cur?.pressureMsl ?: 1013.25
+                            if (cur != null) {
+                                MountaineeringHelper.calculateBarometricPressure(
+                                    basePressure = cur.surfacePressure,
+                                    baseTemp = cur.temperature2m,
+                                    baseAltitude = mountain.altitude,
+                                    targetAltitude = step,
+                                    targetTemp = tempAtStep,
+                                    qnh = qnhVal
+                                )
+                            } else {
+                                1013.25 * Math.pow(1.0 - 0.0000225577 * step, 5.25588)
+                            }
+                        }
+
+                        val estHumidityAtStep = remember(step, tempAtStep, estPressureAtStep, weather.current, peakTemp, mountain.altitude) {
+                            val cur = weather.current
+                            val qnhVal = cur?.pressureMsl ?: 1013.25
+                            MountaineeringHelper.adjustHumidityWithAltitude(
+                                baseHumidity = (cur?.relativeHumidity2m ?: 50.0).toDouble(),
+                                baseTemp = peakTemp,
+                                basePressure = cur?.surfacePressure ?: MountaineeringHelper.calculateBarometricPressure(null, peakTemp, mountain.altitude, mountain.altitude, qnh = qnhVal),
+                                targetTemp = tempAtStep,
+                                targetPressure = estPressureAtStep
+                            )
+                        }
 
                         // Apparent temperature (Windchill / Heat Index adjusted)
-                        val estApparentAtStep = MountaineeringHelper.calculateApparentTemperature(
-                            temp = tempAtStep,
-                            windSpeed = estWindAtStep,
-                            humidity = estHumidityAtStep,
-                            isNight = false
-                        )
+                        val estApparentAtStep = remember(tempAtStep, estWindAtStep, estHumidityAtStep) {
+                            MountaineeringHelper.calculateApparentTemperature(
+                                temp = tempAtStep,
+                                windSpeed = estWindAtStep,
+                                humidity = estHumidityAtStep,
+                                isNight = false
+                            )
+                        }
 
                         // Subzero frozen status
-                        val isStepFrozen = tempAtStep <= 0.0 || step >= freezingLevelHeight
+                        val isStepFrozen = remember(tempAtStep, step, freezingLevelHeight) {
+                            tempAtStep <= 0.0 || step >= freezingLevelHeight
+                        }
 
                         // Dynamic local safety assessment of this altitude step
                         val stepSafety = remember(weather.current, weather.hourly, weather.daily, step, mountain, weather.minutely15) {
@@ -3873,20 +3942,15 @@ fun ClimbingSafetyCard(
     minutely15: com.example.data.remote.Minutely15Data? = null,
     units: com.example.data.remote.WeatherUnits? = null,
     daily: com.example.data.remote.DailyData? = null,
-    apiUtcOffsetSeconds: Int? = null
+    apiUtcOffsetSeconds: Int? = null,
+    minuteTick: Long = 0L
 ) {
     val isDark = MaterialTheme.colorScheme.background.isDark
     val isPremium by viewModel.isPremium.collectAsStateWithLifecycle()
 
-    var timeTick by remember { mutableStateOf(System.currentTimeMillis() / 60000L) }
-    LaunchedEffect(Unit) {
-        while (coroutineContext.isActive) {
-            val now = System.currentTimeMillis()
-            val delayToNextMinute = 60000L - (now % 60000L)
-            kotlinx.coroutines.delay(delayToNextMinute)
-            timeTick = System.currentTimeMillis() / 60000L
-        }
-    }
+    // Shared minute clock (passed from HomeScreenContent) — replaces the
+    // per-card timer; at most one re-evaluation per real minute.
+    val timeTick = minuteTick
 
     val mainReport = remember(current, hourly, daily, altitude, mountain, minutely15, units, timeTick, apiUtcOffsetSeconds) {
         // زنجیرهی آفست استاندارد — متادیتای DST-aware پاسخ Open-Meteo اولویت دارد
@@ -8070,7 +8134,8 @@ fun MountaineeringStatsSection(
     daily: com.example.data.remote.DailyData?,
     hourly: com.example.data.remote.HourlyData?,
     mountain: com.example.data.local.MountainEntity,
-    apiUtcOffsetSeconds: Int? = null
+    apiUtcOffsetSeconds: Int? = null,
+    minuteTick: Long = 0L
 ) {
     val isDark = MaterialTheme.colorScheme.background.isDark
 
@@ -8083,15 +8148,9 @@ fun MountaineeringStatsSection(
         longitude = mountain.longitude
     )
     
-    var statsTick by remember { mutableStateOf(System.currentTimeMillis() / 60000L) }
-    LaunchedEffect(Unit) {
-        while (coroutineContext.isActive) {
-            val now = System.currentTimeMillis()
-            val delayToNextMinute = 60000L - (now % 60000L)
-            kotlinx.coroutines.delay(delayToNextMinute)
-            statsTick = System.currentTimeMillis() / 60000L
-        }
-    }
+    // Shared minute clock (passed from HomeScreenContent) — replaces the
+    // per-card timer; at most one re-evaluation per real minute.
+    val statsTick = minuteTick
 
     val currentHourUTC = remember(statsTick) {
         val nowCal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
@@ -10267,7 +10326,8 @@ fun GoldenWindowSection(
     mountain: com.example.data.local.MountainEntity,
     selectedDaysCount: Int,
     onDaysCountChanged: (Int) -> Unit,
-    apiUtcOffsetSeconds: Int? = null
+    apiUtcOffsetSeconds: Int? = null,
+    minuteTick: Long = 0L
 ) {
     val isDark = MaterialTheme.colorScheme.background.isDark
     val isPremium by viewModel.isPremium.collectAsStateWithLifecycle()
@@ -10282,15 +10342,9 @@ fun GoldenWindowSection(
         )
     }
 
-    var statsTick by remember { mutableStateOf(System.currentTimeMillis() / 60000L) }
-    LaunchedEffect(Unit) {
-        while (coroutineContext.isActive) {
-            val now = System.currentTimeMillis()
-            val delayToNextMinute = 60000L - (now % 60000L)
-            kotlinx.coroutines.delay(delayToNextMinute)
-            statsTick = System.currentTimeMillis() / 60000L
-        }
-    }
+    // Shared minute clock (passed from HomeScreenContent) — replaces the
+    // per-card timer; at most one re-evaluation per real minute.
+    val statsTick = minuteTick
 
     val mountainLocalCalendar = remember(peakOffsetHours, statsTick) {
         val offsetMillis = (peakOffsetHours * 3600 * 1000).toLong()
@@ -10751,7 +10805,8 @@ fun HourlyForecastSection(
     altitude: Int,
     mountain: com.example.data.local.MountainEntity,
     daily: com.example.data.remote.DailyData? = null,
-    apiUtcOffsetSeconds: Int? = null
+    apiUtcOffsetSeconds: Int? = null,
+    minuteTick: Long = 0L
 ) {
     val isPremium by viewModel.isPremium.collectAsStateWithLifecycle()
     val peakOffsetHours = remember(mountain, apiUtcOffsetSeconds) {
@@ -10764,15 +10819,9 @@ fun HourlyForecastSection(
         )
     }
 
-    var statsTick by remember { mutableStateOf(System.currentTimeMillis() / 60000L) }
-    LaunchedEffect(Unit) {
-        while (coroutineContext.isActive) {
-            val now = System.currentTimeMillis()
-            val delayToNextMinute = 60000L - (now % 60000L)
-            kotlinx.coroutines.delay(delayToNextMinute)
-            statsTick = System.currentTimeMillis() / 60000L
-        }
-    }
+    // Shared minute clock (passed from HomeScreenContent) — replaces the
+    // per-card timer; at most one re-evaluation per real minute.
+    val statsTick = minuteTick
 
     val mountainLocalCalendar = remember(peakOffsetHours, statsTick) {
         val offsetMillis = (peakOffsetHours * 3600 * 1000).toLong()
@@ -11949,7 +11998,8 @@ fun DailyForecastSection(
     selectedDaysCount: Int,
     onDaysCountChanged: (Int) -> Unit,
     units: com.example.data.remote.WeatherUnits? = null,
-    apiUtcOffsetSeconds: Int? = null
+    apiUtcOffsetSeconds: Int? = null,
+    minuteTick: Long = 0L
 ) {
     val isDark = MaterialTheme.colorScheme.background.isDark
     var expandedIndex by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -11965,15 +12015,9 @@ fun DailyForecastSection(
         )
     }
 
-    var statsTick by remember { mutableStateOf(System.currentTimeMillis() / 60000L) }
-    LaunchedEffect(Unit) {
-        while (coroutineContext.isActive) {
-            val now = System.currentTimeMillis()
-            val delayToNextMinute = 60000L - (now % 60000L)
-            kotlinx.coroutines.delay(delayToNextMinute)
-            statsTick = System.currentTimeMillis() / 60000L
-        }
-    }
+    // Shared minute clock (passed from HomeScreenContent) — replaces the
+    // per-card timer; at most one re-evaluation per real minute.
+    val statsTick = minuteTick
 
     val mountainLocalCalendar = remember(peakOffsetHours, statsTick) {
         val offsetMillis = (peakOffsetHours * 3600 * 1000).toLong()
