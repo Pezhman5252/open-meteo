@@ -211,52 +211,65 @@ fun BillingDialog(
                                     onBuyClick = {
                                         errorMessage = null
                                         val registry = (context as? ComponentActivity)?.activityResultRegistry
-                                        if (hasBazaar && registry != null) {
-                                            val currentPlans = viewModel.subscriptionPlans.value
-                                            val productId = when (selectedPlan) {
-                                                SubscriptionPlan.Monthly -> currentPlans["monthly"]?.productId ?: BazaarBillingManager.PLAN_MONTHLY_ID
-                                                SubscriptionPlan.Seasonal -> currentPlans["seasonal"]?.productId ?: BazaarBillingManager.PLAN_SEASONAL_ID
-                                                SubscriptionPlan.Annual -> currentPlans["annual"]?.productId ?: BazaarBillingManager.PLAN_ANNUAL_ID
-                                            }
-                                            currentStep = BillingStep.ConnectingBazaar
-                                            BazaarBillingManager.subscribe(
-                                                context = context,
-                                                registry = registry,
-                                                productId = productId,
-                                                userId = userId,
-                                                onFlowBegan = {
-                                                    Log.d("BillingDialog", "Bazaar subscription flow started successfully.")
-                                                },
-                                                onFailedToBegin = { error ->
-                                                    errorMessage = error
-                                                    currentStep = BillingStep.Offer
-                                                },
-                                                onSucceed = { purchaseInfo ->
-                                                    viewModel.viewModelScope.launch {
-                                                        currentStep = BillingStep.ConnectingBazaar
-                                                        val result = BazaarBillingManager.verifyPurchaseOnServer(context, purchaseInfo)
-                                                        when (result) {
-                                                            is BazaarBillingManager.ServerValidationResult.Success -> {
-                                                                viewModel.setPremium(context, true)
-                                                                currentStep = BillingStep.Celebration
-                                                            }
-                                                            is BazaarBillingManager.ServerValidationResult.Failed -> {
-                                                                errorMessage = result.reason
-                                                                currentStep = BillingStep.Offer
+                                        when {
+                                            // Bazaar client not present → guide the user to install it.
+                                            !hasBazaar -> BazaarBillingManager.redirectToInstallBazaar(context)
+
+                                            // No ActivityResultRegistry (shouldn't happen) → surface an error
+                                            // rather than crash.
+                                            registry == null -> errorMessage = "امکان برقراری ارتباط با سرویس پرداخت وجود ندارد. لطفاً دوباره تلاش کنید."
+
+                                            // The Poolakey SDK throws IllegalStateException if a purchase is
+                                            // requested before the Bazaar service connection is established
+                                            // (see BillingConnection.runOnCommunicator). Gate on the connection
+                                            // state instead of only on Bazaar being installed.
+                                            !isBazaarServiceConnected -> errorMessage = "در حال برقراری ارتباط با سرویس پرداخت بازار است. لطفاً چند لحظه صبر کنید و دوباره تلاش کنید."
+
+                                            else -> {
+                                                val currentPlans = viewModel.subscriptionPlans.value
+                                                val productId = when (selectedPlan) {
+                                                    SubscriptionPlan.Monthly -> currentPlans["monthly"]?.productId ?: BazaarBillingManager.PLAN_MONTHLY_ID
+                                                    SubscriptionPlan.Seasonal -> currentPlans["seasonal"]?.productId ?: BazaarBillingManager.PLAN_SEASONAL_ID
+                                                    SubscriptionPlan.Annual -> currentPlans["annual"]?.productId ?: BazaarBillingManager.PLAN_ANNUAL_ID
+                                                }
+                                                currentStep = BillingStep.ConnectingBazaar
+                                                BazaarBillingManager.subscribe(
+                                                    context = context,
+                                                    registry = registry,
+                                                    productId = productId,
+                                                    userId = userId,
+                                                    onFlowBegan = {
+                                                        Log.d("BillingDialog", "Bazaar subscription flow started successfully.")
+                                                    },
+                                                    onFailedToBegin = { error ->
+                                                        errorMessage = error
+                                                        currentStep = BillingStep.Offer
+                                                    },
+                                                    onSucceed = { purchaseInfo ->
+                                                        viewModel.viewModelScope.launch {
+                                                            currentStep = BillingStep.ConnectingBazaar
+                                                            val result = BazaarBillingManager.verifyPurchaseOnServer(context, purchaseInfo, productId)
+                                                            when (result) {
+                                                                is BazaarBillingManager.ServerValidationResult.Success -> {
+                                                                    viewModel.setPremium(context, true)
+                                                                    currentStep = BillingStep.Celebration
+                                                                }
+                                                                is BazaarBillingManager.ServerValidationResult.Failed -> {
+                                                                    errorMessage = result.reason
+                                                                    currentStep = BillingStep.Offer
+                                                                }
                                                             }
                                                         }
+                                                    },
+                                                    onCanceled = {
+                                                        currentStep = BillingStep.Offer
+                                                    },
+                                                    onFailed = { error ->
+                                                        errorMessage = error
+                                                        currentStep = BillingStep.Offer
                                                     }
-                                                },
-                                                onCanceled = {
-                                                    currentStep = BillingStep.Offer
-                                                },
-                                                onFailed = { error ->
-                                                    errorMessage = error
-                                                    currentStep = BillingStep.Offer
-                                                }
-                                            )
-                                        } else {
-                                            BazaarBillingManager.redirectToInstallBazaar(context)
+                                                )
+                                            }
                                         }
                                     },
                                     subscriptionPlans = subscriptionPlans,

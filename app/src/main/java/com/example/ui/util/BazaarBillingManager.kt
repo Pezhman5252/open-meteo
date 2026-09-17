@@ -10,6 +10,7 @@ import ir.cafebazaar.poolakey.Payment
 import ir.cafebazaar.poolakey.config.PaymentConfiguration
 import ir.cafebazaar.poolakey.config.SecurityCheck
 import ir.cafebazaar.poolakey.entity.PurchaseInfo
+import ir.cafebazaar.poolakey.entity.PurchaseState
 import ir.cafebazaar.poolakey.request.PurchaseRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -24,13 +25,24 @@ import java.util.UUID
 object BazaarBillingManager {
     private const val TAG = "BazaarBilling"
 
-    // Secure Cafe Bazaar Public RSA Key (Generated for the mountain weather application)
-    private const val BAZAAR_RSA_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuqy8hHjL" +
-            "b/rE6y7N1uL6gB8kYd1uVv8b1b8X/1b8Y/1b8X1b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b" +
-            "8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b" +
-            "8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b" +
-            "8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b8v8b" +
-            "8v8bWv6T/1Y7+wIDAQAB"
+    // NOTE ON LOCAL SECURITY CHECK:
+    // Poolakey 2.2.0's own source RECOMMENDS `SecurityCheck.Disable` plus validating
+    // purchases via Bazaar's REST API (server-side). `SecurityCheck.Enable` is only
+    // correct when you embed the REAL public RSA key issued for this app in Bazaar's
+    // developer panel. A placeholder/fabricated key (as was previously hard-coded here)
+    // makes EVERY purchase fail local signature verification and breaks the whole
+    // payment flow, so it must never ship.
+    //
+    // This app currently has no dedicated Bazaar-purchase backend, so we follow the
+    // SDK's recommended default: local signature check disabled, entitlement gated by
+    // (a) the `purchaseState == PURCHASED` guard, (b) package/product identity checks,
+    // (c) client-side payload integrity (freshness + replay nonce), and (d) the
+    // authoritative `getSubscribedProducts()` reconciliation on every app start.
+    //
+    // To add stronger local verification later: paste the REAL Bazaar public RSA key
+    // (from the developer panel) into a BuildConfig/secret and switch `init()` below
+    // to `SecurityCheck.Enable(rsaPublicKey = <realKey>)`. Do NOT re-introduce a
+    // placeholder key.
 
     // Subscription Plan IDs registered on Cafe Bazaar Developer Panel
     const val PLAN_ANNUAL_ID = "annual_gold_sub"
@@ -44,7 +56,15 @@ object BazaarBillingManager {
     private val processedNoncesLock = Any()
 
     /**
-     * Initializes the Poolakey SDK with offline local security check using RSA Public Key.
+     * Initializes the Poolakey SDK.
+     *
+     * Security posture (see the NOTE on local security check above): local signature
+     * checking is DISABLED because no real Bazaar public RSA key is provisioned for
+     * this app, and the SDK itself recommends disabling it in favor of server-side
+     * validation. Entitlement is still gated by [verifyPurchaseOnServer] (purchase
+     * state + package/product identity + payload integrity) and by the authoritative
+     * subscription reconciliation performed on every app start.
+     *
      * The instance is created once and reused for subsequent calls.
      *
      * @param context The application context.
@@ -52,8 +72,7 @@ object BazaarBillingManager {
      */
     fun init(context: Context): Payment {
         if (paymentInstance == null) {
-            val securityCheck = SecurityCheck.Enable(rsaPublicKey = BAZAAR_RSA_KEY)
-            val config = PaymentConfiguration(localSecurityCheck = securityCheck)
+            val config = PaymentConfiguration(localSecurityCheck = SecurityCheck.Disable)
             paymentInstance = Payment(context = context.applicationContext, config = config)
         }
         return paymentInstance!!
@@ -122,22 +141,58 @@ object BazaarBillingManager {
     }
 
     /**
-     * Performs a LOCAL purchase integrity check (no external server is contacted).
+     * Performs a CLIENT-SIDE purchase integrity check (no external server is contacted).
      *
-     * Checks payload format, freshness (timestamp within 10 minutes), and prevents replay
-     * attacks by ensuring the nonce has not been consumed before. Processed nonces are
-     * persisted to SharedPreferences so replay protection survives app restarts.
+     * Order of checks (all must pass):
+     *  0a. Purchase state must be [PurchaseState.PURCHASED]. A `REFUNDED` purchase must
+     *      never grant an entitlement — this is the first gate.
+     *  0b. Package identity: the purchase's `packageName` must match this app. A purchase
+     *      returned for a different package is rejected.
+     *  1.  Payload format + freshness (timestamp within 10 minutes) — rejects stale
+     *      transaction metadata.
+     *  2.  Replay prevention: the nonce must not have been consumed before (persisted to
+     *      SharedPreferences so it survives app restarts).
      *
-     * Note: The RSA purchase signature is verified locally by the Poolakey
-     * [SecurityCheck.Enable] configuration at purchase time. This function performs the
-     * additional client-side integrity checks documented above; it is NOT a server
-     * verification and must not be presented to users as such.
+     * Note: this is a CLIENT-SIDE integrity check, NOT Bazaar server-side verification,
+     * and must not be presented to users as such. The authoritative signal that a
+     * subscription is actually active is [queryActiveSubscriptions] (i.e.
+     * `getSubscribedProducts`), which the app reconciles on every start. For a
+     * high-value durable entitlement, add Bazaar REST validation on a backend (see the
+     * `cafebazaar-poolakey` skill → security.md).
      *
      * @param context The application context used for durable nonce storage.
      * @param purchase The PurchaseInfo received from Bazaar.
+     * @param expectedProductId The product id this purchase flow requested (the plan
+     *        the user selected); the returned purchase must match it exactly.
      * @return A ServerValidationResult indicating success or failure with a reason.
      */
-    suspend fun verifyPurchaseOnServer(context: Context, purchase: PurchaseInfo): ServerValidationResult = withContext(Dispatchers.IO) {
+    suspend fun verifyPurchaseOnServer(
+        context: Context,
+        purchase: PurchaseInfo,
+        expectedProductId: String
+    ): ServerValidationResult = withContext(Dispatchers.IO) {
+        // 0a. GATE: only a PURCHASED transaction may grant value.
+        // Poolakey's PurchaseInfo.purchaseState can be PURCHASED or REFUNDED.
+        if (purchase.purchaseState != PurchaseState.PURCHASED) {
+            Log.w(TAG, "Rejecting non-PURCHASED transaction. State: ${purchase.purchaseState}, Product: ${purchase.productId}")
+            return@withContext ServerValidationResult.Failed("تراکنش معتبر نیست. وضعیت پرداخت «خریداری‌شده» تأیید نشد.")
+        }
+
+        // 0b. GATE: package identity — the purchase must belong to THIS app.
+        val expectedPackage = context.packageName
+        if (purchase.packageName.isBlank() || purchase.packageName != expectedPackage) {
+            Log.w(TAG, "Rejecting purchase for mismatched package: got '${purchase.packageName}', expected '$expectedPackage'")
+            return@withContext ServerValidationResult.Failed("خطای امنیتی: این تراکنش متعلق به این برنامه نیست.")
+        }
+
+        // 0c. GATE: product identity — the returned product must be exactly the one this
+        // flow requested (the id may come from the billing worker config, so we compare
+        // against the requested id rather than a hard-coded list).
+        if (purchase.productId != expectedProductId) {
+            Log.w(TAG, "Rejecting purchase for mismatched product: got '${purchase.productId}', expected '$expectedProductId'")
+            return@withContext ServerValidationResult.Failed("خطای امنیتی: شناسه‌ی محصول دریافتی با اشتراک درخواستی مطابقت ندارد.")
+        }
+
         val payload = purchase.payload
         if (payload.isBlank()) {
             return@withContext ServerValidationResult.Failed("خطای امنیتی: کد ارسالی (Payload) خالی است.")
@@ -174,8 +229,9 @@ object BazaarBillingManager {
             prefs.edit().putBoolean(nonce, true).commit()
         }
 
-        // 3. Local RSA signature verification is already enforced by SecurityCheck.Enable!
-        Log.d(TAG, "Local purchase verification successful! User: $userId, Nonce: $nonce, Token: ${purchase.purchaseToken}")
+        // 3. All client-side integrity checks passed. Durable entitlement ultimately
+        //    rests on the getSubscribedProducts() reconciliation, not on this callback.
+        Log.d(TAG, "Client-side purchase verification successful! User: $userId, Nonce: $nonce, Product: ${purchase.productId}, Token: ${purchase.purchaseToken}")
         return@withContext ServerValidationResult.Success(userId = userId, token = purchase.purchaseToken)
     }
 
@@ -212,7 +268,7 @@ object BazaarBillingManager {
             payload = securePayload
         )
 
-        Log.d(TAG, "Initiating subscription for $productId with payload: $securePayload")
+        Log.d(TAG, "Initiating subscription for $productId")
 
         payment.subscribeProduct(
             registry = registry,
@@ -228,7 +284,7 @@ object BazaarBillingManager {
                 onFailedToBegin(errorMsg)
             }
             purchaseSucceed { purchaseInfo ->
-                Log.d(TAG, "Bazaar purchase completed. Starting verification: ${purchaseInfo.purchaseToken}")
+                Log.d(TAG, "Bazaar purchase completed for ${purchaseInfo.productId}. Starting verification.")
                 onSucceed(purchaseInfo)
             }
             purchaseCanceled {

@@ -69,6 +69,7 @@ import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.Vazirmatn
 import com.example.ui.util.BazaarBillingManager
+import ir.cafebazaar.poolakey.entity.PurchaseState
 import com.example.ui.weather.WeatherViewModel
 import com.example.ui.weather.WeatherViewModelFactory
 
@@ -108,9 +109,10 @@ class MainActivity : ComponentActivity() {
                                 context = context,
                                 onSuccess = { subscriptions ->
                                     val isUserPremium = subscriptions.any {
-                                        it.productId == BazaarBillingManager.PLAN_ANNUAL_ID ||
+                                        it.purchaseState == PurchaseState.PURCHASED &&
+                                        (it.productId == BazaarBillingManager.PLAN_ANNUAL_ID ||
                                         it.productId == BazaarBillingManager.PLAN_SEASONAL_ID ||
-                                        it.productId == BazaarBillingManager.PLAN_MONTHLY_ID
+                                        it.productId == BazaarBillingManager.PLAN_MONTHLY_ID)
                                     }
                                     if (isUserPremium) {
                                         viewModel.setPremium(context, true)
