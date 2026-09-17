@@ -49,10 +49,10 @@ async function handleRequest(request) {
         seasonal: {
           productId: "seasonal_gold_sub",
           title: "اشتراک ۳ ماهه (فصلی)",
-          subtitle: "مناسب برنامه‌های فصل • ۱۱،۰۰۰ ت / ماه",
+          subtitle: "مناسب برنامه‌های فصل • ۱۵۹،۶۶۷ ت / ماه",
           priceText: "۴۷۹،۰۰۰ ت",
           priceValue: 479000,
-          discountBadge: "۱۱٪ تخفیف",
+          discountBadge: "۱۰٪ تخفیف",
           badgeType: "red",
           originalPriceText: "۵۳۰،۰۰۰ ت" // Strike-through original price
         },
@@ -62,7 +62,7 @@ async function handleRequest(request) {
           subtitle: "بهترین و اقتصادی‌ترین صعود • ۱۰۷،۵۰۰ ت / ماه",
           priceText: "۱،۲۹۰،۰۰۰ ت",
           priceValue: 1290000,
-          discountBadge: "۴۰٪ تخفیف",
+          discountBadge: "۲۹٪ تخفیف",
           badgeType: "red", // Support presets: red, green, blue, orange, purple, or direct Hex code like #E11D48
           originalPriceText: "۱،۸۰۶،۰۰۰ ت" // Strike-through original price
         }
@@ -72,7 +72,7 @@ async function handleRequest(request) {
         title: "ارتقاء به سطح طلایی صعود",
         subtitle: "دسترسی محدود (نسخه رایگان)",
         discountBadge: "تخفیف ویژه",
-        description: "با خرید اشتراک طلایی صعود، امکانات رادار ریسک حاد قله (بهمن، رعد و برق و سرمازدگی)، ترازهای ارتفاعی پیشرفته و پیش‌بینی ۷ روزه را باز کنید.",
+        description: "با خرید اشتراک طلایی صعود، امکانات رادار ریسک حاد قله (بهمن، رعد و برق و سرمازدگی)، ترازهای ارتفاعی پیشرفته و پیش‌بینی ۱۶ روزه را باز کنید.",
         buttonText: "ارتقاء به اشتراک طلایی از کافه‌بازار"
       }
     }

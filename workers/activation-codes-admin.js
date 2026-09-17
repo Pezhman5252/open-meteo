@@ -58,6 +58,10 @@ function checkRequiredEnv(env) {
   if (!env.CODES) missing.push("CODES (KV namespace)");
   if (!env.SESSIONS) missing.push("SESSIONS (KV namespace)");
   if (!env.RATE) missing.push("RATE (KV namespace)");
+  // SUBSCRIPTIONS حیاتی است: verifyCode و checkSubscription مستقیماً از آن استفاده
+  // می‌کنند؛ اگر نباشد، verify با 500 «خطای داخلی سرور» شکست می‌خورد — ولی
+  // checkRequiredEnv قبلاً آن را بررسی نمی‌کرد و ورکر «سلامت» به نظر می‌رسید.
+  if (!env.SUBSCRIPTIONS) missing.push("SUBSCRIPTIONS (KV namespace)");
   if (missing.length) {
     throw new Error(`متغیرهای محیطی زیر تنظیم نشده‌اند: ${missing.join(", ")}`);
   }

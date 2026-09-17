@@ -57,18 +57,21 @@ class WeatherViewModel(
     val defaultPromoConfig = PromoConfig(
         title = "ارتقاء به سطح طلایی صعود",
         subtitle = "دسترسی محدود (نسخه رایگان)",
-        discountBadge = "۵۰٪ تخفیف",
-        description = "با خرید اشتراک طلایی صعود، امکانات رادار ریسک حاد قله (بهمن، رعد و برق و سرمازدگی)، ترازهای ارتفاعی پیشرفته و پیش‌بینی ۷ روزه را باز کنید.",
+        discountBadge = "تخفیف ویژه",
+        description = "با خرید اشتراک طلایی صعود، امکانات رادار ریسک حاد قله (بهمن، رعد و برق و سرمازدگی)، ترازهای ارتفاعی پیشرفته و پیش‌بینی ۱۶ روزه را باز کنید.",
         buttonText = "ارتقاء به اشتراک طلایی از کافه‌بازار"
     )
 
+    // قیمت‌های آفلاین: بازتاب قیمت‌های فعلی ورکر ir-mountain-weather-billing.
+    // منبع اصلی و زنده قیمت همیشه /api/billing/plans است (بدون آپدیت اپ تغییر می‌کند)؛
+    // این مقادیر فقط برای اولین اجرا/آفلاین هستند و باید هنگام تغییر قیمت در ورکر به‌روز شوند.
     private val defaultPlans = mapOf(
         "monthly" to SubscriptionPlanConfig(
             productId = "monthly_gold_sub",
             title = "اشتراک ۱ ماهه عادی",
             subtitle = "تمدید ماهانه صعود طلایی",
-            priceText = "۱۹,۰۰۰ ت",
-            priceValue = 19000,
+            priceText = "۱۷۹،۰۰۰ ت",
+            priceValue = 179000,
             discountBadge = null,
             badgeType = null,
             originalPriceText = null,
@@ -77,23 +80,23 @@ class WeatherViewModel(
         "seasonal" to SubscriptionPlanConfig(
             productId = "seasonal_gold_sub",
             title = "اشتراک ۳ ماهه (فصلی)",
-            subtitle = "مناسب برنامه‌های فصل • ۱۱,۰۰۰ ت / ماه",
-            priceText = "۳۳,۰۰۰ ت",
-            priceValue = 33000,
-            discountBadge = "محبوب صعود",
-            badgeType = "green",
-            originalPriceText = "۵۷,۰۰۰ ت",
+            subtitle = "مناسب برنامه‌های فصل • ۱۵۹،۶۶۷ ت / ماه",
+            priceText = "۴۷۹،۰۰۰ ت",
+            priceValue = 479000,
+            discountBadge = "۱۰٪ تخفیف",
+            badgeType = "red",
+            originalPriceText = "۵۳۰،۰۰۰ ت",
             isPopular = true
         ),
         "annual" to SubscriptionPlanConfig(
             productId = "annual_gold_sub",
             title = "اشتراک ۱ ساله ویژه",
-            subtitle = "بهترین و اقتصادی‌ترین صعود • ۴,۰۰۰ ت / ماه",
-            priceText = "۴۹,۰۰۰ ت",
-            priceValue = 49000,
-            discountBadge = "۸۰٪ تخفیف",
+            subtitle = "بهترین و اقتصادی‌ترین صعود • ۱۰۷،۵۰۰ ت / ماه",
+            priceText = "۱،۲۹۰،۰۰۰ ت",
+            priceValue = 1290000,
+            discountBadge = "۲۹٪ تخفیف",
             badgeType = "red",
-            originalPriceText = "۲۲۸,۰۰۰ ت",
+            originalPriceText = "۱،۸۰۶،۰۰۰ ت",
             isPopular = true
         )
     )
