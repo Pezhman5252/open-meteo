@@ -303,6 +303,8 @@ fun OfferScreen(
     subscriptionPlans: Map<String, com.example.ui.weather.SubscriptionPlanConfig>,
     isLoadingPlans: Boolean
 ) {
+    // Plans come from the Cloudflare billing worker (single source of truth for
+    // pricing); these are offline fallbacks only, kept in sync with the worker.
     val annualPlan = subscriptionPlans["annual"] ?: com.example.ui.weather.SubscriptionPlanConfig(
         productId = "annual_gold_sub",
         title = "اشتراک ۱ ساله ویژه",
@@ -323,7 +325,7 @@ fun OfferScreen(
         discountBadge = "۱۰٪ تخفیف",
         badgeType = "red",
         originalPriceText = "۵۳۰،۰۰۰ ت",
-        isPopular = true
+        isPopular = false
     )
     val monthlyPlan = subscriptionPlans["monthly"] ?: com.example.ui.weather.SubscriptionPlanConfig(
         productId = "monthly_gold_sub",
@@ -341,15 +343,7 @@ fun OfferScreen(
     val textColor = if (isDark) Color.White else MaterialTheme.colorScheme.onSurface
     val textMutedColor = if (isDark) Color.White.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
     val textUltraMutedColor = if (isDark) Color.White.copy(alpha = 0.4f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-    val textHalfColor = if (isDark) Color.White.copy(alpha = 0.5f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
     val goldColor = if (isDark) Color(0xFFFFD700) else Color(0xFF9A6A00)
-
-    val cardBgSelected = if (isDark) Color(0xFFFFD700).copy(alpha = 0.06f) else Color(0xFF9A6A00).copy(alpha = 0.08f)
-    val cardBgNormal = if (isDark) Color.White.copy(alpha = 0.02f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
-    val cardBorderSelected = goldColor
-    val cardBorderNormal = if (isDark) Color.White.copy(alpha = 0.08f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
-    val radioInnerBg = if (isDark) Color(0xFF0C101B) else MaterialTheme.colorScheme.surface
-    val radioBorderNormal = if (isDark) Color.White.copy(alpha = 0.3f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
 
     Column(
         modifier = Modifier
@@ -387,41 +381,92 @@ fun OfferScreen(
                     }
                 }
             } else {
-                // Header
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier.fillMaxWidth()
+                // ── Header ────────────────────────────────────────────────
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Stars,
-                        contentDescription = null,
-                        tint = goldColor,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(goldColor.copy(alpha = if (isDark) 0.12f else 0.14f))
+                            .border(
+                                1.dp,
+                                goldColor.copy(alpha = 0.35f),
+                                RoundedCornerShape(50)
+                            )
+                            .padding(horizontal = 10.dp, vertical = 3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Stars,
+                            contentDescription = null,
+                            tint = goldColor,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = "اشتراک ویژه هواشناسی",
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = goldColor,
+                            fontFamily = Vazirmatn
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "صعود طلایی (اشتراک ویژه هواشناسی)",
+                        text = "صعود طلایی",
                         fontWeight = FontWeight.Black,
-                        fontSize = 16.sp,
+                        fontSize = 20.sp,
                         color = textColor,
+                        fontFamily = Vazirmatn
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "کل ابزارهای حرفه‌ای ایمنی و برنامه‌ریزی صعود، در یک اشتراک",
+                        fontSize = 11.sp,
+                        color = textMutedColor,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
                         fontFamily = Vazirmatn
                     )
                 }
 
-                Text(
-                    text = "قفل پتانسیل کامل ناوبری و ایمنی کوهستان خود را باز کنید",
-                    fontSize = 10.5.sp,
-                    color = textMutedColor,
-                    fontWeight = FontWeight.Normal,
-                    textAlign = TextAlign.Center,
-                    fontFamily = Vazirmatn,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
-                )
+                Spacer(modifier = Modifier.height(16.dp))
 
-                // Features
+                // ── Plan selector (price visible without scrolling) ───────
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PlanCard(
+                        plan = annualPlan,
+                        selected = selectedPlan == SubscriptionPlan.Annual,
+                        popular = annualPlan.isPopular ?: true,
+                        isDark = isDark,
+                        onClick = { onPlanSelect(SubscriptionPlan.Annual) }
+                    )
+                    PlanCard(
+                        plan = seasonalPlan,
+                        selected = selectedPlan == SubscriptionPlan.Seasonal,
+                        popular = seasonalPlan.isPopular ?: false,
+                        isDark = isDark,
+                        onClick = { onPlanSelect(SubscriptionPlan.Seasonal) }
+                    )
+                    PlanCard(
+                        plan = monthlyPlan,
+                        selected = selectedPlan == SubscriptionPlan.Monthly,
+                        popular = monthlyPlan.isPopular ?: false,
+                        isDark = isDark,
+                        onClick = { onPlanSelect(SubscriptionPlan.Monthly) }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // ── What you get (compact, truthful one-liners) ───────────
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
@@ -433,429 +478,65 @@ fun OfferScreen(
                             if (isDark) Color.White.copy(alpha = 0.05f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.12f),
                             RoundedCornerShape(16.dp)
                         )
-                        .padding(14.dp)
+                        .padding(vertical = 8.dp)
                 ) {
-                    PremiumFeatureRow(
+                    Text(
+                        text = "با صعود طلایی چه می‌گیرید؟",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        color = textColor,
+                        fontFamily = Vazirmatn,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                    )
+                    CompactFeatureRow(
                         icon = Icons.Default.FilterHdr,
-                        title = "پنجره طلایی صعود ایمن (Golden Window)",
-                        desc = "آنالیز هوشمند و دقیق همزمان پارامترهای باد، دما، صاعقه، دید و بارش جهت یافتن امن‌ترین ساعات صعود"
+                        title = "پنجره طلایی صعود ایمن",
+                        desc = "امن‌ترین ساعات صعود با هم‌پیمایی باد، دما، صاعقه، بارش و دید — تا ۱۶ روز آینده"
                     )
-                    PremiumFeatureRow(
+                    CompactFeatureRow(
                         icon = Icons.Default.DateRange,
-                        title = "پیش‌بینی جامع ۷ روزه و ۱۶ روزه قله‌ها",
-                        desc = "دسترسی کامل به زمان‌بندی صعودهای زمستانه و برنامه‌های چندروزه خط‌الراس‌های البرز و زاگرس"
+                        title = "پیش‌بینی روزانه تا ۱۶ روزه",
+                        desc = "نسخه رایگان ۳ روزه است؛ برنامه‌ریزی کامل چندروزه با اشتراک"
                     )
-                    PremiumFeatureRow(
+                    CompactFeatureRow(
                         icon = Icons.Default.Shield,
-                        title = "رادار ریسک‌های حاد صعود",
-                        desc = "پایش زنده پتانسیل صاعقه، خطر بهمن، هیپوترمی حاد، زمان یخ‌زدگی پوست و شاخص دید طوفان (Whiteout)"
+                        title = "رادار ریسک صعود",
+                        desc = "پایش ۲۴ ساعته ریسک + شبیه‌ساز ۱۵ دقیقه‌ای (رایگان: ۶ ساعت)"
                     )
-                    PremiumFeatureRow(
+                    CompactFeatureRow(
                         icon = Icons.Default.Landscape,
-                        title = "ترازهای ارتفاعی چندگانه باد و دما",
-                        desc = "سنجش سرعت باد، دما، رطوبت و ارتفاع خط انجماد در سه تراز پویا (پای‌کار، کمپ میانی و قله اصلی)"
+                        title = "ترازهای ارتفاعی کامل",
+                        desc = "باد، دما و رطوبت در هر تراز ۵۰۰ متری از پای‌کار تا قله"
                     )
-                    PremiumFeatureRow(
+                    CompactFeatureRow(
                         icon = Icons.Default.AddLocation,
-                        title = "ثبت نامحدود قله‌های سفارشی با GPS",
-                        desc = "افزودن نامحدود قله‌ها، دره‌ها، دیواره‌ها یا جان‌پناه‌های دلخواه با ثبت دقیق مختصات جغرافیایی"
+                        title = "قله‌های سفارشی نامحدود",
+                        desc = "ثبت نامحدود قله، دره، دیواره یا جان‌پناه دلخواه شما"
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Plans
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                // ── Trust line ────────────────────────────────────────────
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Annual Plan
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable { onPlanSelect(SubscriptionPlan.Annual) }
-                            .border(
-                                BorderStroke(
-                                    width = if (selectedPlan == SubscriptionPlan.Annual) 1.5.dp else 1.dp,
-                                    color = if (selectedPlan == SubscriptionPlan.Annual) cardBorderSelected else cardBorderNormal
-                                ),
-                                RoundedCornerShape(16.dp)
-                            ),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (selectedPlan == SubscriptionPlan.Annual) cardBgSelected else cardBgNormal
-                        ),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(18.dp)
-                                        .clip(CircleShape)
-                                        .background(if (selectedPlan == SubscriptionPlan.Annual) goldColor else Color.Transparent)
-                                        .border(1.5.dp, if (selectedPlan == SubscriptionPlan.Annual) goldColor else radioBorderNormal, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (selectedPlan == SubscriptionPlan.Annual) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(8.dp)
-                                                .clip(CircleShape)
-                                                .background(radioInnerBg)
-                                        )
-                                    }
-                                }
-                                Column {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(
-                                            text = annualPlan.title,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.5.sp,
-                                            color = textColor,
-                                            fontFamily = Vazirmatn
-                                        )
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(6.dp))
-                                                    .background(Color(0xFFD97706))
-                                                    .padding(horizontal = 6.dp, vertical = 1.5.dp)
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Star,
-                                                        contentDescription = null,
-                                                        tint = Color.White,
-                                                        modifier = Modifier.size(9.dp)
-                                                    )
-                                                    Text(
-                                                        text = "محبوب‌ترین",
-                                                        fontSize = 8.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Color.White,
-                                                        fontFamily = Vazirmatn
-                                                    )
-                                                }
-                                            }
-                                            if (!annualPlan.discountBadge.isNullOrBlank()) {
-                                                val badgeBgColor = parseBadgeColor(annualPlan.badgeType, Color(0xFFE11D48))
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(6.dp))
-                                                        .background(badgeBgColor)
-                                                        .padding(horizontal = 6.dp, vertical = 1.5.dp)
-                                                ) {
-                                                    Text(
-                                                        text = annualPlan.discountBadge!!,
-                                                        fontSize = 8.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Color.White,
-                                                        fontFamily = Vazirmatn
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Text(
-                                        text = annualPlan.subtitle,
-                                        fontSize = 9.5.sp,
-                                        color = textHalfColor,
-                                        fontFamily = Vazirmatn,
-                                        modifier = Modifier.padding(top = 1.dp)
-                                    )
-                                }
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.End,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                if (!annualPlan.originalPriceText.isNullOrBlank()) {
-                                    Text(
-                                        text = annualPlan.originalPriceText!!,
-                                        fontWeight = FontWeight.Normal,
-                                        fontSize = 10.5.sp,
-                                        color = textUltraMutedColor,
-                                        textDecoration = TextDecoration.LineThrough,
-                                        fontFamily = Vazirmatn,
-                                        modifier = Modifier.padding(bottom = 2.dp)
-                                    )
-                                }
-                                Text(
-                                    text = annualPlan.priceText,
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 12.5.sp,
-                                    color = if (selectedPlan == SubscriptionPlan.Annual) goldColor else textColor,
-                                    fontFamily = Vazirmatn
-                                )
-                            }
-                        }
-                    }
-
-                    // Seasonal Plan
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable { onPlanSelect(SubscriptionPlan.Seasonal) }
-                            .border(
-                                BorderStroke(
-                                    width = if (selectedPlan == SubscriptionPlan.Seasonal) 1.5.dp else 1.dp,
-                                    color = if (selectedPlan == SubscriptionPlan.Seasonal) cardBorderSelected else cardBorderNormal
-                                ),
-                                RoundedCornerShape(16.dp)
-                            ),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (selectedPlan == SubscriptionPlan.Seasonal) cardBgSelected else cardBgNormal
-                        ),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(18.dp)
-                                        .clip(CircleShape)
-                                        .background(if (selectedPlan == SubscriptionPlan.Seasonal) goldColor else Color.Transparent)
-                                        .border(1.5.dp, if (selectedPlan == SubscriptionPlan.Seasonal) goldColor else radioBorderNormal, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (selectedPlan == SubscriptionPlan.Seasonal) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(8.dp)
-                                                .clip(CircleShape)
-                                                .background(radioInnerBg)
-                                        )
-                                    }
-                                }
-                                Column {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(
-                                            text = seasonalPlan.title,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.5.sp,
-                                            color = textColor,
-                                            fontFamily = Vazirmatn
-                                        )
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            if (!seasonalPlan.discountBadge.isNullOrBlank()) {
-                                                val badgeBgColor = parseBadgeColor(seasonalPlan.badgeType, Color(0xFF10B981))
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(6.dp))
-                                                        .background(badgeBgColor)
-                                                        .padding(horizontal = 6.dp, vertical = 1.5.dp)
-                                                ) {
-                                                    Text(
-                                                        text = seasonalPlan.discountBadge!!,
-                                                        fontSize = 8.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Color.White,
-                                                        fontFamily = Vazirmatn
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Text(
-                                        text = seasonalPlan.subtitle,
-                                        fontSize = 9.5.sp,
-                                        color = textHalfColor,
-                                        fontFamily = Vazirmatn,
-                                        modifier = Modifier.padding(top = 1.dp)
-                                    )
-                                }
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.End,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                if (!seasonalPlan.originalPriceText.isNullOrBlank()) {
-                                    Text(
-                                        text = seasonalPlan.originalPriceText!!,
-                                        fontWeight = FontWeight.Normal,
-                                        fontSize = 10.5.sp,
-                                        color = textUltraMutedColor,
-                                        textDecoration = TextDecoration.LineThrough,
-                                        fontFamily = Vazirmatn,
-                                        modifier = Modifier.padding(bottom = 2.dp)
-                                    )
-                                }
-                                Text(
-                                    text = seasonalPlan.priceText,
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 12.5.sp,
-                                    color = if (selectedPlan == SubscriptionPlan.Seasonal) goldColor else textColor,
-                                    fontFamily = Vazirmatn
-                                )
-                            }
-                        }
-                    }
-
-                    // Monthly Plan
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable { onPlanSelect(SubscriptionPlan.Monthly) }
-                            .border(
-                                BorderStroke(
-                                    width = if (selectedPlan == SubscriptionPlan.Monthly) 1.5.dp else 1.dp,
-                                    color = if (selectedPlan == SubscriptionPlan.Monthly) cardBorderSelected else cardBorderNormal
-                                ),
-                                RoundedCornerShape(16.dp)
-                            ),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (selectedPlan == SubscriptionPlan.Monthly) cardBgSelected else cardBgNormal
-                        ),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(18.dp)
-                                        .clip(CircleShape)
-                                        .background(if (selectedPlan == SubscriptionPlan.Monthly) goldColor else Color.Transparent)
-                                        .border(1.5.dp, if (selectedPlan == SubscriptionPlan.Monthly) goldColor else radioBorderNormal, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (selectedPlan == SubscriptionPlan.Monthly) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(8.dp)
-                                                .clip(CircleShape)
-                                                .background(radioInnerBg)
-                                        )
-                                    }
-                                }
-                                Column {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(
-                                            text = monthlyPlan.title,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.5.sp,
-                                            color = textColor,
-                                            fontFamily = Vazirmatn
-                                        )
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            if (!monthlyPlan.discountBadge.isNullOrBlank()) {
-                                                val badgeBgColor = parseBadgeColor(monthlyPlan.badgeType, Color(0xFFE11D48))
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(6.dp))
-                                                        .background(badgeBgColor)
-                                                        .padding(horizontal = 6.dp, vertical = 1.5.dp)
-                                                ) {
-                                                    Text(
-                                                        text = monthlyPlan.discountBadge!!,
-                                                        fontSize = 8.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Color.White,
-                                                        fontFamily = Vazirmatn
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Text(
-                                        text = monthlyPlan.subtitle,
-                                        fontSize = 9.5.sp,
-                                        color = textHalfColor,
-                                        fontFamily = Vazirmatn,
-                                        modifier = Modifier.padding(top = 1.dp)
-                                    )
-                                }
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.End,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                if (!monthlyPlan.originalPriceText.isNullOrBlank()) {
-                                    Text(
-                                        text = monthlyPlan.originalPriceText!!,
-                                        fontWeight = FontWeight.Normal,
-                                        fontSize = 10.5.sp,
-                                        color = textUltraMutedColor,
-                                        textDecoration = TextDecoration.LineThrough,
-                                        fontFamily = Vazirmatn,
-                                        modifier = Modifier.padding(bottom = 2.dp)
-                                    )
-                                }
-                                Text(
-                                    text = monthlyPlan.priceText,
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 12.5.sp,
-                                    color = if (selectedPlan == SubscriptionPlan.Monthly) goldColor else textColor,
-                                    fontFamily = Vazirmatn
-                                )
-                            }
-                        }
-                    }
+                    TrustItem(icon = Icons.Default.Lock, text = "پرداخت امن از کافه‌بازار", isDark = isDark, muted = textUltraMutedColor)
+                    TrustItem(icon = Icons.Default.Bolt, text = "فعال‌سازی آنی", isDark = isDark, muted = textUltraMutedColor)
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Buy Button
+        // ── Buy Button ────────────────────────────────────────────────────
         Button(
             onClick = onBuyClick,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .height(50.dp)
                 .testTag("buy_gold_subscription_bazaar"),
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
@@ -871,11 +552,258 @@ fun OfferScreen(
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = if (hasBazaar) "خرید اشتراک طلایی از کافه‌بازار" else "نصب برنامه کافه‌بازار جهت خرید",
-                fontSize = 12.5.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Black,
                 fontFamily = Vazirmatn
             )
         }
+    }
+}
+
+/**
+ * A single subscription-plan row. The popular plan gets a gold accent + "محبوب‌ترین" badge.
+ * All pricing values come from the worker-provided [SubscriptionPlanConfig]; [popular]
+ * is a UI decision owned by the app (annual by default) with an optional worker override.
+ */
+@Composable
+private fun PlanCard(
+    plan: com.example.ui.weather.SubscriptionPlanConfig,
+    selected: Boolean,
+    popular: Boolean,
+    isDark: Boolean,
+    onClick: () -> Unit
+) {
+    val textColor = if (isDark) Color.White else MaterialTheme.colorScheme.onSurface
+    val textMutedColor = if (isDark) Color.White.copy(alpha = 0.55f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+    val textUltraMutedColor = if (isDark) Color.White.copy(alpha = 0.38f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+    val goldColor = if (isDark) Color(0xFFFFD700) else Color(0xFF9A6A00)
+
+    val cardBg = when {
+        selected && popular -> goldColor.copy(alpha = if (isDark) 0.08f else 0.10f)
+        selected -> if (isDark) Color.White.copy(alpha = 0.05f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f)
+        popular -> if (isDark) goldColor.copy(alpha = 0.04f) else goldColor.copy(alpha = 0.05f)
+        else -> if (isDark) Color.White.copy(alpha = 0.02f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+    }
+    val cardBorder = when {
+        selected -> goldColor.copy(alpha = 0.9f)
+        popular -> goldColor.copy(alpha = 0.45f)
+        else -> if (isDark) Color.White.copy(alpha = 0.08f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+    }
+
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = cardBg,
+        border = BorderStroke(
+            width = if (selected) 1.5.dp else 1.dp,
+            color = cardBorder
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            // Radio indicator
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(if (selected) goldColor else Color.Transparent)
+                    .border(
+                        1.5.dp,
+                        if (selected) goldColor else if (isDark) Color.White.copy(alpha = 0.3f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                if (selected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = if (isDark) Color(0xFF0C101B) else Color.White,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+            }
+            // Title + badges + subtitle
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text(
+                        text = plan.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = textColor,
+                        fontFamily = Vazirmatn
+                    )
+                    if (popular) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(goldColor.copy(alpha = if (isDark) 0.18f else 0.15f))
+                                .border(1.dp, goldColor.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = "محبوب‌ترین",
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Black,
+                                color = goldColor,
+                                fontFamily = Vazirmatn
+                            )
+                        }
+                    }
+                    if (!plan.discountBadge.isNullOrBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(parseBadgeColor(plan.badgeType, Color(0xFFE11D48)))
+                                .padding(horizontal = 6.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = plan.discountBadge!!,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                fontFamily = Vazirmatn
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = plan.subtitle,
+                    fontSize = 9.5.sp,
+                    color = textMutedColor,
+                    fontFamily = Vazirmatn,
+                    modifier = Modifier.padding(top = 1.dp)
+                )
+            }
+            // Price — a FIXED-height (non-fillMaxWidth) slot for the strikethrough keeps the
+            // bold price baseline aligned across discounted and non-discounted cards.
+            // NOTE: no fillMaxWidth here — this Column is a non-weighted Row child, and
+            // fillMaxWidth would make it claim the whole row width and collapse the title.
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .height(14.dp),
+                    contentAlignment = Alignment.BottomEnd
+                ) {
+                    if (!plan.originalPriceText.isNullOrBlank()) {
+                        Text(
+                            text = plan.originalPriceText!!,
+                            fontWeight = FontWeight.Normal,
+                            fontSize = 9.5.sp,
+                            color = textUltraMutedColor,
+                            textDecoration = TextDecoration.LineThrough,
+                            fontFamily = Vazirmatn
+                        )
+                    }
+                }
+                Text(
+                    text = plan.priceText,
+                    fontWeight = FontWeight.Black,
+                    fontSize = if (popular) 14.sp else 12.5.sp,
+                    color = if (selected || popular) goldColor else textColor,
+                    fontFamily = Vazirmatn
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactFeatureRow(
+    icon: ImageVector,
+    title: String,
+    desc: String
+) {
+    val isDark = MaterialTheme.colorScheme.background.isDark
+    val goldColor = if (isDark) Color(0xFFFFD700) else Color(0xFF9A6A00)
+    val textColor = if (isDark) Color.White else MaterialTheme.colorScheme.onSurface
+    val textMutedColor = if (isDark) Color.White.copy(alpha = 0.55f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(goldColor.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = goldColor,
+                modifier = Modifier.size(14.dp)
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = textColor,
+                fontFamily = Vazirmatn
+            )
+            Text(
+                text = desc,
+                fontSize = 9.5.sp,
+                color = textMutedColor,
+                fontFamily = Vazirmatn,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 1.dp)
+            )
+        }
+        Icon(
+            imageVector = Icons.Default.CheckCircle,
+            contentDescription = null,
+            tint = Color(0xFF10B981),
+            modifier = Modifier.size(14.dp)
+        )
+    }
+}
+
+@Composable
+private fun TrustItem(
+    icon: ImageVector,
+    text: String,
+    isDark: Boolean,
+    muted: Color
+) {
+    val goldColor = if (isDark) Color(0xFFFFD700) else Color(0xFF9A6A00)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = goldColor.copy(alpha = 0.8f),
+            modifier = Modifier.size(11.dp)
+        )
+        Text(
+            text = text,
+            fontSize = 9.sp,
+            color = muted,
+            fontWeight = FontWeight.Medium,
+            fontFamily = Vazirmatn
+        )
     }
 }
 
@@ -897,56 +825,6 @@ private fun parseBadgeColor(badgeType: String?, defaultColor: Color): Color {
         "yellow" -> Color(0xFFD97706)
         "purple" -> Color(0xFF9333EA)
         else -> defaultColor
-    }
-}
-
-@Composable
-fun PremiumFeatureRow(
-    icon: ImageVector,
-    title: String,
-    desc: String
-) {
-    val isDark = MaterialTheme.colorScheme.background.isDark
-    val goldColor = if (isDark) Color(0xFFFFD700) else Color(0xFF9A6A00)
-    val textColor = if (isDark) Color.White else MaterialTheme.colorScheme.onSurface
-    val textMutedColor = if (isDark) Color.White.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .clip(CircleShape)
-                .background(goldColor.copy(alpha = 0.1f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = goldColor,
-                modifier = Modifier.size(15.dp)
-            )
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = textColor,
-                fontFamily = Vazirmatn
-            )
-            Text(
-                text = desc,
-                fontSize = 10.sp,
-                color = textMutedColor,
-                lineHeight = 14.sp,
-                fontFamily = Vazirmatn,
-                modifier = Modifier.padding(top = 2.dp)
-            )
-        }
     }
 }
 
@@ -1048,7 +926,7 @@ fun CelebrationScreen(
         )
 
         Text(
-            text = "هم‌اکنون تمامی ویژگی‌های تخصصی پیش‌بینی چند ارتفاعی، رادار ریسک صعود و رصد ۷ روزه قله‌ها برای شما باز شده است. با خیالی آسوده صعود کنید.",
+            text = "هم‌اکنون تمامی ابزارهای صعود طلایی برای شما فعال شد: پیش‌بینی ۱۶ روزه، پنجره طلایی صعود ایمن، رادار ریسک ۲۴ ساعته، شبیه‌ساز ۱۵ دقیقه‌ای و ترازهای ارتفاعی کامل. با خیالی آسوده صعود کنید.",
             fontSize = 11.sp,
             color = textMutedColor,
             fontWeight = FontWeight.Medium,

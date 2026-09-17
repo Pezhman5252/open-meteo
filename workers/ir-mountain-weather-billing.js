@@ -64,7 +64,8 @@ async function handleRequest(request) {
           priceValue: 1290000,
           discountBadge: "۲۹٪ تخفیف",
           badgeType: "red", // Support presets: red, green, blue, orange, purple, or direct Hex code like #E11D48
-          originalPriceText: "۱،۸۰۶،۰۰۰ ت" // Strike-through original price
+          originalPriceText: "۱،۸۰۶،۰۰۰ ت", // Strike-through original price
+          isPopular: true // App renders a "محبوب‌ترین" gold badge on the popular plan
         }
       },
       // 2. Real-time Promo Banner Configuration (rendered in SettingsScreen)
