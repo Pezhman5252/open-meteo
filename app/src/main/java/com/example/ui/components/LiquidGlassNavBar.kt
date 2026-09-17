@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -208,8 +209,15 @@ fun LiquidGlassNavBar(
 
     // ─── Theme-aware palette (mirrors LiquidGlassDefaults.tintFor) ───
     val veilColor = if (isDark) Color(0xFF0B1220) else Color(0xFFFFFFFF)
+    // The veil is the FROST, not an opaque fill. It must be translucent enough
+    // that the blurred backdrop (the content behind the bar) shows through — that
+    // translucency + blur IS the "liquid glass" look (Telegram-style). An overly
+    // opaque veil (the original 0.58/0.50) erased almost all of the blurred
+    // contrast and flattened the capsule into a solid-looking pill. 0.24/0.22
+    // keeps the tab labels legible while the content's light/dark smudges stay
+    // clearly visible behind the glass.
     val veilAlpha = when (state.tier) {
-        GlassTier.Full -> if (isDark) 0.58f else 0.50f
+        GlassTier.Full -> if (isDark) 0.24f else 0.22f
         GlassTier.Fallback -> if (isDark) 0.92f else 0.90f
     }
     val borderColor = if (isDark) Color.White.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.65f)
@@ -272,7 +280,15 @@ fun LiquidGlassNavBar(
     val density = LocalDensity.current
     val blurChain: androidx.compose.ui.graphics.RenderEffect? = remember(state.tier, density) {
         if (state.tier == GlassTier.Full && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val blurPx = with(density) { 24.dp.toPx() }
+            // Frosted-glass radius. 24dp (~68px) was far too aggressive: it
+            // annihilated all fine detail behind the bar (text, card edges) and
+            // collapsed the dark, low-contrast content into a near-uniform field,
+            // so the capsule read as a FLAT solid pill instead of frosted glass.
+            // 6dp (~17px) is a light frost: large shapes soften into smudges and
+            // text becomes a recognizable but defocused blur (Telegram / iOS
+            // style) — "the text behind the bar, shown as blur" — instead of
+            // disappearing entirely.
+            val blurPx = with(density) { 6.dp.toPx() }
             val blurEffect = RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.DECAL)
             // Android has no createColorMatrixEffect — the saturation boost goes
             // through ColorMatrixColorFilter instead.
