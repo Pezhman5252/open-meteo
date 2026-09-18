@@ -5,6 +5,21 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!--
+        حذف صریح مجوزهای ممنوعه از مانیفست ترکیبی (manifest merge).
+        کافه‌بازار این مجوزها را در اپ‌ها نمی‌پذیرد. این خط‌ها defensive هستند:
+        اگر هیچ کتابخانه‌ای آن‌ها را اعلام نکند، بدون اثر می‌مانند؛ اگر در آینده
+        کتابخانه‌ای اضافه‌شان کند، مانع merge به APK نهایی می‌شوند.
+        (SDK پرداخت رسمی کافه‌بازار = Poolakey 2.2.0؛ SDK مایکت/Myket وجود ندارد.)
+    -->
+    <uses-permission android:name="ir.mservices.market.BILLING" tools:node="remove" />
+    <uses-permission android:name="com.myket.market.permission.BILLING" tools:node="remove" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.SEND_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" tools:node="remove" />
+    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" tools:node="remove" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
