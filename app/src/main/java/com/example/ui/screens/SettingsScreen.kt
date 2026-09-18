@@ -36,6 +36,8 @@ import com.example.BuildConfig
 import com.example.ui.theme.Vazirmatn
 import com.example.ui.theme.isDark
 import com.example.ui.util.PersianDateHelper
+import android.content.Intent
+import android.net.Uri
 import com.example.ui.weather.ActivationUiState
 import com.example.ui.weather.SyncUiState
 import com.example.ui.weather.WeatherViewModel
@@ -1903,7 +1905,217 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            // ==================== 8. OPEN SOURCES & LICENSES ====================
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("licenses_card"),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Gavel,
+                                contentDescription = "مجوزها و منابع",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Text(
+                            text = "مجوزها و منابع باز",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        text = "این اپلیکیشن از داده‌ها و اجزای زیر استفاده می‌کند که تحت مجوزهای باز منتشر شده‌اند. ذکر منبع در راستای رعایت آن مجوزها درج شده است.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                        lineHeight = 20.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // ── Open-Meteo (weather data, CC BY 4.0) ──────────────────
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "داده‌های هواشناسی — Open-Meteo",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "پیش‌بینی‌ها و داده‌های هواشناسی توسط Open-Meteo.com (open-meteo.com) ارائه می‌شود و تحت مجوز CC BY 4.0 منتشر شده است؛ استفاده و توزیع شامل استفاده تجاری با ذکر منبع مجاز است.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                            lineHeight = 19.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            LicenseLink(
+                                label = "open-meteo.com",
+                                url = "https://open-meteo.com",
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            LicenseLink(
+                                label = "مجوز CC BY 4.0",
+                                url = "https://creativecommons.org/licenses/by/4.0/",
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // ── Vazirmatn font (SIL OFL 1.1) ──────────────────────────
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "فونت — Vazirmatn",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "© 2015 The Vazirmatn Project Authors (rastikerdar.com). این فونت تحت مجوز SIL Open Font License 1.1 (OFL) در دسترس و توزیع می‌شود.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                            lineHeight = 19.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            LicenseLink(
+                                label = "vazirmatn.com",
+                                url = "https://vazirmatn.com",
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            LicenseLink(
+                                label = "مجوز OFL 1.1",
+                                url = "https://scripts.sil.org/OFL",
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // ── Open-source libraries (Apache 2.0) ────────────────────
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "کتابخانه‌های متن‌باز",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "کتابخانه‌های AndroidX / Jetpack Compose، Kotlin، Retrofit، OkHttp، Moshi، Coil و کتابخانه پرداخت Poolakey تحت مجوز Apache License 2.0 استفاده می‌شوند.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                            lineHeight = 19.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LicenseLink(
+                            label = "apache.org/licenses/LICENSE-2.0",
+                            url = "https://www.apache.org/licenses/LICENSE-2.0",
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "© ${java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)} دیدبان هواشناسی کوهستان ایران. کلیه حقوق این اپلیکیشن (کد، طراحی و علائم) برای سازنده محفوظ است؛ داده‌ها و اجزای ذکرشده در بالا به مجوزهای باز خود مشروطند.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        lineHeight = 17.sp
+                    )
+                }
+            }
+
+            // فاصله انتهای اسکرول: بزرگ‌تر از ارتفاع نوار شناور شیشه‌ای تا آخرین
+            // سطر (کپی‌رایت) زیر نوار پنهان نشود و کامل خوانده شود.
+            Spacer(modifier = Modifier.height(96.dp))
+        }
+    }
+}
+
+/** A small tappable pill that opens [url] in the system browser — for license/attribution links. */
+@Composable
+private fun LicenseLink(
+    label: String,
+    url: String,
+    color: Color
+) {
+    val context = LocalContext.current
+    Surface(
+        onClick = {
+            runCatching {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            }
+        },
+        shape = RoundedCornerShape(100),
+        color = color.copy(alpha = 0.08f),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.3f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.OpenInNew,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(12.dp)
+            )
+            Text(
+                text = label,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = color
+            )
         }
     }
 }
