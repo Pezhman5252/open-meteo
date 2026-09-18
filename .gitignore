@@ -16,6 +16,8 @@
 local.properties
 .env
 debug.keystore
+release.keystore
+release-keystore-info.txt
 .android-sdk
 .dsh/
 .kilo/

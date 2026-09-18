@@ -13,31 +13,47 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.aistudio.iranmountainweather.bupbyy"
+        // شناسه‌ی رسمی انتشار (کافه‌بازار). این نام باید با نام Package ثبت‌شده در
+        // پنل بازار یکی باشد؛ بعد از اولین آپلود قابل تغییر نیست.
+        applicationId = "com.iranmountainweather"
         minSdk = 24
         targetSdk = 35
+        // نسخه استاندارد (semver): MAJOR.MINOR.PATCH.
+        // هر انتشار جدید: versionCode را ۱ واحد زیاد کن (فقط برای بازار؛ تراز صعودی).
+        // versionName را مطابق semver به‌روز کن:
+        //  بازنویسی/نسخه‌ی بزرگ → ۲.۰.۰ | قابلیت جدید → ۱.x.۰ | باگ‌فیکس → ۱.y.z
+        // نسخه‌ی نمایشی در اپ (تنظیمات) از همین BuildConfig.VERSION_NAME خوانده می‌شود.
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
         create("release") {
-            val keystorePath = System.getenv("KEYSTORE_PATH") ?: "$rootDir/my-upload-key.jks"
-            val keystoreFile = file(keystorePath)
-            val uploadCredentialsPresent =
-                keystoreFile.exists() &&
-                    System.getenv("STORE_PASSWORD") != null &&
-                    System.getenv("KEY_PASSWORD") != null
-            if (uploadCredentialsPresent) {
-                storeFile = keystoreFile
-                storePassword = System.getenv("STORE_PASSWORD")
-                keyAlias = "upload"
-                keyPassword = System.getenv("KEY_PASSWORD")
+            // اولویت: (۱) متغیرهای محیطی (CI)، (۲) فایل محلی gitignored
+            // release-keystore-info.txt. keystore در release.keystore (PKCS12؛
+            // store و key یک رمز مشترک). اگر موجود نبود، fallback به keystore
+            // debug فقط برای بیلد محلی — خروجی این حالت هرگز آپلود نشود.
+            val keystoreFile = file(System.getenv("KEYSTORE_PATH") ?: "$rootDir/release.keystore")
+            val credsFile = file("$rootDir/release-keystore-info.txt")
+            val fileCreds: Map<String, String> = if (credsFile.exists()) {
+                credsFile.readLines()
+                    .filter { it.contains('=') && !it.startsWith('#') }
+                    .associate { it.substringBefore('=') to it.substringAfter('=').trim() }
             } else {
-                // No upload keystore/credentials are available (e.g. local/dev builds).
-                // Fall back to the checked-in debug keystore so release variants still build.
+                emptyMap()
+            }
+            val password = System.getenv("KEY_PASSWORD")
+                ?: System.getenv("STORE_PASSWORD")
+                ?: fileCreds["password"]
+            if (keystoreFile.exists() && password != null) {
+                storeType = "PKCS12"
+                storeFile = keystoreFile
+                storePassword = password
+                keyAlias = System.getenv("KEY_ALIAS") ?: fileCreds["alias"]
+                keyPassword = password
+            } else {
                 storeFile = file("$rootDir/debug.keystore")
                 storePassword = "android"
                 keyAlias = "androiddebugkey"
