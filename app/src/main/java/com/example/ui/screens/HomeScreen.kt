@@ -2709,19 +2709,17 @@ fun MountainHeroCard(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        val hasWindChillEffect = activeTemp <= 10.0 && activeWind >= 4.8 && (activeTemp - activeApparent) >= 0.2
-                        val hasHeatIndexEffect = activeTemp >= 27.0 && (activeApparent - activeTemp) >= 0.2
-
-                        val mainDisplayTemp = if (hasWindChillEffect || hasHeatIndexEffect) activeApparent else activeTemp
+                        // هم‌راستای «دمای شاخص» در کل اپ: دمای واقعی همیشه مقدار
+                        // اصلی بزرگ است (CurrentWeatherSection هم همین است).
+                        // پیش‌تر در شرایط سوزباد/گرما، دمای حسی بزرگ می‌شد و در
+                        // کارت دیگر دمای واقعی — کوهنورد دو دمای متفاوت می‌دید.
+                        // حالا: واقعی = بزرگ + برچسب، دمای حسی/گرما = پیل مکمل.
+                        val mainDisplayTemp = activeTemp
                         val absMainTemp = kotlin.math.abs(mainDisplayTemp)
                         val pMainTempFormatted = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", absMainTemp))
                         val mainSign = if (mainDisplayTemp < -0.05) "−" else if (mainDisplayTemp > 0.05) "+" else ""
 
-                        val mainLabel = when {
-                            hasWindChillEffect -> "دمای احساسی (شاخص سوزباد)"
-                            hasHeatIndexEffect -> "شاخص گرما"
-                            else -> "دمای واقعی هوا"
-                        }
+                        val mainLabel = "دمای واقعی هوا"
 
                         Text(
                             text = mainLabel,
@@ -2743,17 +2741,20 @@ fun MountainHeroCard(
                                 color = if (mainDisplayTemp <= 0.0) (if (isDark) Color(0xFF00E5FF) else Color(0xFF00838F)) else (if (isDark) Color(0xFF00FF87) else Color(0xFF15803D))
                             )
 
-                            if (hasWindChillEffect || hasHeatIndexEffect) {
-                                val absDry = kotlin.math.abs(activeTemp)
-                                val pDryFormatted = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", absDry))
-                                val drySign = if (activeTemp < -0.05) "−" else if (activeTemp > 0.05) "+" else ""
+                            // دمای شاخص مکمل (حسی/سوزباد یا گرما) — همیشه مکملِ دمای
+                            // واقعیِ اصلی، تا با CurrentWeatherSection یکی باشد.
+                            if ((activeTemp - activeApparent).let { kotlin.math.abs(it) } >= 0.5) {
+                                val absFeel = kotlin.math.abs(activeApparent)
+                                val pFeelFormatted = PersianDateHelper.formatToPersianDigits(String.format(java.util.Locale.US, "%.1f", absFeel))
+                                val feelSign = if (activeApparent < -0.05) "−" else if (activeApparent > 0.05) "+" else ""
+                                val feelLabel = if (activeApparent < activeTemp) "سوزباد" else "حسی"
                                 Surface(
                                     shape = RoundedCornerShape(9.dp),
                                     color = getTextColor(0.05f),
                                     border = BorderStroke(0.6.dp, getTextColor(0.10f))
                                 ) {
                                     Text(
-                                        text = "واقعی: \u200E$drySign$pDryFormatted°C",
+                                        text = "$feelLabel: \u200E$feelSign$pFeelFormatted°C",
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = getTextColor(0.6f),
@@ -2761,7 +2762,7 @@ fun MountainHeroCard(
                                         maxLines = 1
                                     )
                                 }
-                            } else if (activeTemp <= 10.0 && activeWind < 4.8) {
+                            } else {
                                 Text(
                                     text = "(بدون اثر سوزباد)",
                                     fontSize = 10.sp,
@@ -11134,6 +11135,11 @@ fun HourlyForecastSection(
                     (item.index < currentHourIdx || (item.index - currentHourIdx) >= 6)
                 val safetyReport = remember(item, hourly, altitude, isDark, mountain, peakOffsetHours, daily) { getHourlySafetyReport(item, hourly, altitude, isDark, mountain, peakOffsetHours, daily = daily) }
                 val isCurrent = item.index == currentHourIdx
+                // ساعت‌های گذشته‌ی امروز: خُفه (dim) تا از ساعات «الان» و «باقی‌مانده»
+                // متمایز شوند. قفل (فید ۰/۴ ساعت رایگان) حالت خودش را می‌سازد و
+                // پیشوند when زیر، قفل را قبل از past بررسی می‌کند.
+                val isPastHour = currentHourIdx >= 0 && item.index < currentHourIdx
+                val cardDimAlpha = if (isLocked) 0.55f else if (isPastHour) 0.5f else 1.0f
 
                 // خانه‌های قفل‌شده: رنگ خنثی بدون رنگ‌بندی ایمنی (مطابق «رادار زمانی»)
                 val cardThemeBgColor = remember(isSelected, isLocked, safetyReport.color, isDark) {
@@ -11165,7 +11171,8 @@ fun HourlyForecastSection(
 
                 Card(
                     modifier = Modifier
-                        .width(86.dp),
+                        .width(86.dp)
+                        .alpha(cardDimAlpha),
                     shape = RoundedCornerShape(18.dp),
                     border = borderStroke,
                     colors = CardDefaults.cardColors(
@@ -12763,8 +12770,11 @@ fun DailyDetailExpandablePanel(
             sunriseTimeVal = "\u200E" + com.example.ui.util.PersianDateHelper.formatToPersianDigits(formattedSunrise)
             sunsetTimeVal = "\u200E" + com.example.ui.util.PersianDateHelper.formatToPersianDigits(formattedSunset)
 
-            val alpineStartHour = (peakSunriseHour - 3.0 + 24.0) % 24.0
-            val alpineEndHour = (peakSunsetHour - 6.0 + 24.0) % 24.0
+            // هم‌راستا با alpineReport و کارت آماری: تعریف استاندارد پنجره آلپاین
+            // = طلوع −۲ / غروب −۴. (پیش‌تر −۳/−۶ بود و ساعت شروع/پایان را ۱ ساعت
+            // با کارت «پنجره طلایی صعود ایمن» دومی می‌کرد؛ حالا یکسان است.)
+            val alpineStartHour = (peakSunriseHour - 2.0 + 24.0) % 24.0
+            val alpineEndHour = (peakSunsetHour - 4.0 + 24.0) % 24.0
             val formattedAlpineStart = com.example.ui.util.AstronomicalCalculator.formatFractionalHour(alpineStartHour)
             val formattedAlpineEnd = com.example.ui.util.AstronomicalCalculator.formatFractionalHour(alpineEndHour)
             val alpineStartP = "\u200E" + com.example.ui.util.PersianDateHelper.formatToPersianDigits(formattedAlpineStart)
