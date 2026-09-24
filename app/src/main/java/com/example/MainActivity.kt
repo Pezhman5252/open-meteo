@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -101,6 +102,11 @@ class MainActivity : ComponentActivity() {
                 // Trigger startup server-side subscription check (if activation code exists)
                 viewModel.checkSubscriptionOnStartup(context)
 
+                // Soft Bazaar update check (official guideline: bind to the Bazaar
+                // UpdateCheckService, compare versionCode, remind at most once/day).
+                // Silently no-ops when Bazaar is absent or the app is not on Bazaar.
+                viewModel.checkForBazaarUpdate(this@MainActivity)
+
                 if (BazaarBillingManager.isBazaarInstalled(context)) {
                     BazaarBillingManager.connect(
                         context = context,
@@ -145,6 +151,7 @@ class MainActivity : ComponentActivity() {
                 viewModel.updateTheme(context)
             }
             val showBillingDialog by viewModel.showBillingDialog.collectAsStateWithLifecycle()
+            val updateReminderVersion by viewModel.updateReminderVersion.collectAsStateWithLifecycle()
             var currentTab by remember { mutableStateOf(AppTab.Dashboard) }
 
             // Liquid-glass shared state: links the content backdrop to the glass bar.
@@ -268,6 +275,58 @@ class MainActivity : ComponentActivity() {
                                         imageVector = Icons.AutoMirrored.Filled.ExitToApp,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                shape = RoundedCornerShape(24.dp)
+                            )
+                        }
+
+                        if (updateReminderVersion > 0L) {
+                            AlertDialog(
+                                onDismissRequest = { viewModel.dismissUpdateReminder() },
+                                confirmButton = {
+                                    Button(
+                                        onClick = { activity?.let { viewModel.openBazaarPage(it) } },
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text(
+                                            text = "به‌روزرسانی",
+                                            fontFamily = Vazirmatn,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(
+                                        onClick = { viewModel.dismissUpdateReminder() }
+                                    ) {
+                                        Text(
+                                            text = "بعداً",
+                                            fontFamily = Vazirmatn,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                },
+                                title = {
+                                    Text(
+                                        text = "نسخه جدید در دسترس است",
+                                        fontFamily = Vazirmatn,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                },
+                                text = {
+                                    Text(
+                                        text = "نسخه تازه‌تر «هواشناسی کوهستان» در کافه‌بازار منتشر شده است. به‌روزرسانی برای دریافت آخرین بهبودها و اصلاحات ایمنی توصیه می‌شود.",
+                                        fontFamily = Vazirmatn,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                icon = {
+                                    Icon(
+                                        imageVector = Icons.Default.SystemUpdate,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
                                     )
                                 },
                                 shape = RoundedCornerShape(24.dp)

@@ -303,12 +303,79 @@ class WeatherViewModel(
     private val _ticketLookupState = MutableStateFlow<TicketLookupUiState>(TicketLookupUiState.Idle)
     val ticketLookupState = _ticketLookupState.asStateFlow()
 
+    // Bazaar update reminder (soft, dismissible, at most once a day per candidate version)
+    private val _updateReminderVersion = MutableStateFlow(0L)
+    val updateReminderVersion = _updateReminderVersion.asStateFlow()
+
     fun resetTicketUiState() {
         _ticketUiState.value = TicketUiState.Idle
     }
 
     fun resetTicketLookupState() {
         _ticketLookupState.value = TicketLookupUiState.Idle
+    }
+
+    /**
+     * «بررسی به‌روزبودن برنامه» (راهنمای رسمی بازار): bind کوتاه به سرویس
+     * بازار، پرسیدن آخرین versionCode و مقایسه با نسخه‌ی نصب‌شده.
+     * فقط یک بار در روز (برای هر نسخه‌ی جدید) و کاملاً بی‌صدا در خطا/نبود بازار.
+     */
+    fun checkForBazaarUpdate(activity: android.app.Activity) {
+        val pkg = activity.packageName
+        val appVersionCode = try {
+            val pi = activity.packageManager.getPackageInfo(pkg, 0)
+            if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode.toInt() else pi.versionCode
+        } catch (e: Exception) {
+            null
+        } ?: return
+        viewModelScope.launch {
+            val candidate = runCatching {
+                com.example.ui.util.BazaarUpdateChecker.checkLatestVersionCode(activity, pkg)
+            }.getOrNull()
+            if (candidate == null) {
+                Log.d("WeatherViewModel", "Bazaar update check: no answer (Bazaar absent / not bound). Silent.")
+                return@launch // بازار نیست / پاسخ نبود -> سکوت
+            }
+            Log.d("WeatherViewModel", "Bazaar update check: candidate=$candidate current=$appVersionCode")
+            val dismissed = settingsDataStore.updateDismissedVersion.first()
+            val lastShown = settingsDataStore.updateLastShownAt.first()
+            if (com.example.ui.util.BazaarUpdateChecker.shouldShowUpdateReminder(
+                    candidateVersionCode = candidate,
+                    currentVersionCode = appVersionCode,
+                    dismissedVersionCode = dismissed,
+                    lastShownAtMillis = lastShown,
+                    nowMillis = System.currentTimeMillis()
+                )) {
+                _updateReminderVersion.value = candidate
+                settingsDataStore.markUpdateShown(candidate)
+            }
+        }
+    }
+
+    /** «بعداً» — همان نسخه دیگر تا یک روز دیگر پیشنهاد نمی‌شود. */
+    fun dismissUpdateReminder() {
+        _updateReminderVersion.value = 0L
+    }
+
+    /** «به‌روزرسانی» — ارجاع به صفحه‌ی اپ در کافه‌بازار. */
+    fun openBazaarPage(activity: android.app.Activity) {
+        _updateReminderVersion.value = 0L
+        runCatching {
+            val intent = android.content.Intent(
+                android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse("market://details?id=${activity.packageName}")
+            )
+            activity.startActivity(intent)
+        }.onFailure {
+            // بازار روی این دستگاه نیست -> صفحه‌ی وب بازار
+            runCatching {
+                val web = android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse("https://cafebazaar.ir/app/${activity.packageName}")
+                )
+                activity.startActivity(web)
+            }
+        }
     }
 
     fun resetActivationUiState() {

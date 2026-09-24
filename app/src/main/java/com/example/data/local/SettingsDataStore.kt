@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -22,6 +23,8 @@ class SettingsDataStore(private val context: Context) {
         val SUBSCRIPTION_ID = stringPreferencesKey("subscription_id")
         val SUBSCRIPTION_EXPIRES_AT = stringPreferencesKey("subscription_expires_at")
         val TICKET_ID = stringPreferencesKey("ticket_id")
+        val UPDATE_LAST_SHOWN_AT = longPreferencesKey("update_last_shown_at")
+        val UPDATE_DISMISSED_VERSION = stringPreferencesKey("update_dismissed_version")
     }
 
     val isPremium: Flow<Boolean> = context.settingsDataStore.data
@@ -54,9 +57,27 @@ class SettingsDataStore(private val context: Context) {
             preferences[TICKET_ID] ?: ""
         }
 
+    val updateLastShownAt: Flow<Long> = context.settingsDataStore.data
+        .map { preferences ->
+            preferences[UPDATE_LAST_SHOWN_AT] ?: 0L
+        }
+
+    val updateDismissedVersion: Flow<String> = context.settingsDataStore.data
+        .map { preferences ->
+            preferences[UPDATE_DISMISSED_VERSION] ?: ""
+        }
+
     suspend fun setTicketId(id: String) {
         context.settingsDataStore.edit { preferences ->
             preferences[TICKET_ID] = id
+        }
+    }
+
+    /** Called when the update reminder is shown OR dismissed for a candidate version. */
+    suspend fun markUpdateShown(candidateVersionCode: Long) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[UPDATE_LAST_SHOWN_AT] = System.currentTimeMillis()
+            preferences[UPDATE_DISMISSED_VERSION] = candidateVersionCode.toString()
         }
     }
 
