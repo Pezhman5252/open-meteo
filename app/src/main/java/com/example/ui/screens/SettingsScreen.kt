@@ -1944,7 +1944,7 @@ fun SettingsScreen(
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "مشکلات فنی یا پرداخت را ثبت کنید؛ اطلاعات دستگاه به‌طور خودکار ارسال می‌شود.",
+                        text = "مشکلات فنی یا پرداخت را ثبت کنید؛ اطلاعات اشتراک به‌طور خودکار ارسال می‌شود.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                         lineHeight = 16.sp
@@ -2005,7 +2005,7 @@ fun SettingsScreen(
                             .clickable {
                                 val intent = Intent(
                                     Intent.ACTION_SENDTO,
-                                    Uri.parse("mailto:persianboy.1991g@gmail.com")
+                                    Uri.parse("mailto:iranmountainweather@gmail.com")
                                 )
                                 runCatching { context.startActivity(intent) }
                             }
@@ -2021,7 +2021,7 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "persianboy.1991g@gmail.com",
+                            text = "iranmountainweather@gmail.com",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.primary
@@ -2373,7 +2373,7 @@ private fun SupportTicketDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "مشکل یا سؤال خود را بنویسید. اطلاعات نسخه، مدل دستگاه و وضعیت اشتراک به‌صورت خودکار ضمیمه می‌شود تا سریع‌تر کمکتان کنیم.",
+                    text = "مشکل یا سؤال خود را بنویسید. اطلاعات نسخه و وضعیت اشتراک به‌صورت خودکار ضمیمه می‌شود تا سریع‌تر کمکتان کنیم.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     lineHeight = 18.sp
