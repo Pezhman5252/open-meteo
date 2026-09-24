@@ -32,6 +32,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import com.example.BuildConfig
 import com.example.ui.theme.Vazirmatn
 import com.example.ui.theme.isDark
@@ -40,6 +42,8 @@ import android.content.Intent
 import android.net.Uri
 import com.example.ui.weather.ActivationUiState
 import com.example.ui.weather.SyncUiState
+import com.example.ui.weather.TicketLookupUiState
+import com.example.ui.weather.TicketUiState
 import com.example.ui.weather.WeatherViewModel
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -107,6 +111,21 @@ fun SettingsScreen(
     }
 
     var codeInput by remember { mutableStateOf("") }
+
+    // ---------- Support ticket dialog state ----------
+    val ticketUiState by viewModel.ticketUiState.collectAsStateWithLifecycle()
+    var showTicketDialog by remember { mutableStateOf(false) }
+    var ticketEmail by remember { mutableStateOf("") }
+    var ticketSubject by remember { mutableStateOf("") }
+    var ticketDescription by remember { mutableStateOf("") }
+
+    // ---------- Ticket follow-up state ----------
+    val ticketId by viewModel.ticketId.collectAsStateWithLifecycle()
+    val ticketLookupState by viewModel.ticketLookupState.collectAsStateWithLifecycle()
+    var showTicketLookupDialog by remember { mutableStateOf(false) }
+
+    // Note: on submit success we intentionally keep the dialog open and swap its
+    // content to a confirmation (see SupportTicketDialog). No auto-close here.
 
     LaunchedEffect(activationUiState) {
         if (activationUiState is ActivationUiState.Success) {
@@ -1878,31 +1897,175 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                    // ---------- پشتیبانی: توسعه‌دهنده + ثبت تیکت + ایمیل ----------
+                    Text(
+                        text = "پشتیبانی فنی",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "توسعه‌دهنده: پژمان حاجی‌پور",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                    Text(
+                        text = "نسخه ${BuildConfig.VERSION_NAME}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // دکمه‌ی ثبت تیکت
+                    Button(
+                        onClick = { showTicketDialog = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .testTag("ticket_button"),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        )
                     ) {
-                        Column {
-                            Text(
-                                text = "پشتیبانی فنی",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
+                        Icon(
+                            imageVector = Icons.Default.Chat,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "ثبت تیکت پشتیبانی",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "مشکلات فنی یا پرداخت را ثبت کنید؛ اطلاعات دستگاه به‌طور خودکار ارسال می‌شود.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        lineHeight = 16.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // ردیف پیگیری تیکت (فقط وقتی تیکتی ثبت شده باشد)
+                    if (ticketId.isNotBlank()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.06f))
+                                .clickable {
+                                    showTicketLookupDialog = true
+                                    viewModel.checkTicketStatus()
+                                }
+                                .padding(horizontal = 12.dp, vertical = 12.dp)
+                                .testTag("ticket_followup_row"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
                             )
-                            Text(
-                                text = "persianboy.1991g@gmail.com",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "پیگیری تیکت",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "وضعیت و پاسخ پشتیبانی را ببینید",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Default.ChevronLeft,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                modifier = Modifier.size(18.dp)
                             )
                         }
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
+                    // ایمیل (کانال جایگزین)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                            .clickable {
+                                val intent = Intent(
+                                    Intent.ACTION_SENDTO,
+                                    Uri.parse("mailto:persianboy.1991g@gmail.com")
+                                )
+                                runCatching { context.startActivity(intent) }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .testTag("support_email_row"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Email,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "نسخه ${BuildConfig.VERSION_NAME}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            text = "persianboy.1991g@gmail.com",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
+            }
+
+            // ==================== 7.5 SUPPORT TICKET DIALOG ====================
+            if (showTicketDialog) {
+                SupportTicketDialog(
+                    emailState = ticketEmail,
+                    onEmailChange = { ticketEmail = it },
+                    subjectState = ticketSubject,
+                    onSubjectChange = { ticketSubject = it },
+                    descriptionState = ticketDescription,
+                    onDescriptionChange = { ticketDescription = it },
+                    uiState = ticketUiState,
+                    onDismiss = {
+                        showTicketDialog = false
+                        viewModel.resetTicketUiState()
+                        ticketSubject = ""
+                        ticketDescription = ""
+                    },
+                    onSubmit = {
+                        viewModel.submitTicket(
+                            context = context,
+                            email = ticketEmail,
+                            subject = ticketSubject,
+                            description = ticketDescription
+                        )
+                    }
+                )
+            }
+
+            // ==================== 7.6 TICKET FOLLOW-UP DIALOG ====================
+            if (showTicketLookupDialog) {
+                TicketLookupDialog(
+                    lookupState = ticketLookupState,
+                    onDismiss = {
+                        showTicketLookupDialog = false
+                        viewModel.resetTicketLookupState()
+                    }
+                )
             }
 
             // ==================== 8. OPEN SOURCES & LICENSES ====================
@@ -2118,4 +2281,408 @@ private fun LicenseLink(
             )
         }
     }
+}
+
+// ============================================================================
+// Support Ticket Dialog — کوهنورد مشکل را توضیح می‌دهد؛ نسخه/مدل/اشتراک
+// به‌صورت خودکار در WeatherViewModel.attachTicketDeviceInfo() ضمیمه می‌شود.
+// ============================================================================
+@Composable
+private fun SupportTicketDialog(
+    emailState: String,
+    onEmailChange: (String) -> Unit,
+    subjectState: String,
+    onSubjectChange: (String) -> Unit,
+    descriptionState: String,
+    onDescriptionChange: (String) -> Unit,
+    uiState: TicketUiState,
+    onDismiss: () -> Unit,
+    onSubmit: () -> Unit
+) {
+    val isLoading = uiState is TicketUiState.Loading
+    val isSuccess = uiState is TicketUiState.Success
+    val successTicketId = (uiState as? TicketUiState.Success)?.ticketId ?: ""
+    val errorMessage = (uiState as? TicketUiState.Error)?.message
+
+    AlertDialog(
+        onDismissRequest = { if (!isLoading) onDismiss() },
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = if (isSuccess) Icons.Default.TaskAlt else Icons.Default.Chat,
+                    contentDescription = null,
+                    tint = if (isSuccess) Color(0xFF00C853) else MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (isSuccess) "تیکت با موفقیت ثبت شد" else "ثبت تیکت پشتیبانی",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            if (isSuccess) {
+                // ---------- Confirmation panel ----------
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = Color(0xFF00C853),
+                        modifier = Modifier.size(56.dp)
+                    )
+                    Text(
+                        text = "تیکت شما با موفقیت ثبت و ارسال شد.",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "پاسخ پشتیبانی معمولاً از همین مسیر در بخش «پیگیری تیکت» نمایش داده می‌شود. اگر پاسخ دریافت نشد، می‌توانید از ایمیل پشتیبانی استفاده کنید.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        lineHeight = 18.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    if (successTicketId.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                        ) {
+                            Text(
+                                text = "شناسه تیکت: $successTicketId",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                                    .testTag("ticket_success_id")
+                            )
+                        }
+                    }
+                }
+            } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "مشکل یا سؤال خود را بنویسید. اطلاعات نسخه، مدل دستگاه و وضعیت اشتراک به‌صورت خودکار ضمیمه می‌شود تا سریع‌تر کمکتان کنیم.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    lineHeight = 18.sp
+                )
+
+                OutlinedTextField(
+                    value = emailState,
+                    onValueChange = onEmailChange,
+                    label = { Text("ایمیل برای پاسخ (اختیاری)") },
+                    singleLine = true,
+                    enabled = !isLoading,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        keyboardType = KeyboardType.Email
+                    ),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        // ایمیل لاتین است؛ در چیدمان RTL هم چپ‌چین نمایش داده شود (End = چپ)
+                        textAlign = TextAlign.End
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("ticket_email_field")
+                )
+
+                OutlinedTextField(
+                    value = subjectState,
+                    onValueChange = onSubjectChange,
+                    label = { Text("موضوع (اختیاری)") },
+                    singleLine = true,
+                    enabled = !isLoading,
+                    modifier = Modifier.fillMaxWidth().testTag("ticket_subject_field")
+                )
+
+                OutlinedTextField(
+                    value = descriptionState,
+                    onValueChange = onDescriptionChange,
+                    label = { Text("توضیح مشکل *") },
+                    minLines = 4,
+                    maxLines = 8,
+                    enabled = !isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("ticket_description_field"),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        // توضیح فارسی است؛ راست‌چین (Start = راست)
+                        textAlign = TextAlign.Start
+                    )
+                )
+
+                errorMessage?.let {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.1f)
+                    ) {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+            }
+            }
+        },
+        confirmButton = {
+            if (isSuccess) {
+                Button(
+                    onClick = onDismiss,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.height(44.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("بستن", fontWeight = FontWeight.Bold)
+                }
+            } else {
+            Button(
+                onClick = onSubmit,
+                enabled = !isLoading && descriptionState.isNotBlank(),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.height(44.dp)
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text("ارسال تیکت", fontWeight = FontWeight.Bold)
+            }
+            }
+        },
+        dismissButton = {
+            if (!isSuccess) {
+                TextButton(
+                    onClick = onDismiss,
+                    enabled = !isLoading
+                ) {
+                    Text("انصراف")
+                }
+            }
+        }
+    )
+}
+
+// ============================================================================
+// TicketLookupDialog — نمایش وضعیت و پاسخ تیکت ثبت‌شده (فقط on-demand).
+// ============================================================================
+@Composable
+private fun TicketLookupDialog(
+    lookupState: TicketLookupUiState,
+    onDismiss: () -> Unit
+) {
+    val isLoading = lookupState is TicketLookupUiState.Loading
+    val successTicket = (lookupState as? TicketLookupUiState.Success)?.ticket
+    val errorMessage = (lookupState as? TicketLookupUiState.Error)?.message
+
+    AlertDialog(
+        onDismissRequest = { if (!isLoading) onDismiss() },
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.History,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "پیگیری تیکت",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            when {
+                isLoading -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(36.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "در حال دریافت وضعیت تیکت...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+                successTicket != null -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "وضعیت",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                            val statusText = when (successTicket.status) {
+                                "in_progress" -> "در حال بررسی"
+                                "resolved" -> "حل‌شده"
+                                else -> "باز"
+                            }
+                            val statusColor = when (successTicket.status) {
+                                "resolved" -> Color(0xFF00C853)
+                                "in_progress" -> Color(0xFFFFB300)
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(100),
+                                color = statusColor.copy(alpha = 0.12f)
+                            ) {
+                                Text(
+                                    text = statusText,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = statusColor,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        successTicket.subject?.takeIf { it.isNotBlank() }?.let { subject ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "موضوع",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = subject,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        // پاسخ پشتیبانی
+                        if (successTicket.reply.isNullOrBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFFFFB300).copy(alpha = 0.08f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "هنوز پاسخی ثبت نشده است. لطفاً کمی صبر کنید؛ معمولاً پاسخ در چند ساعت کاری ثبت می‌شود.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                    lineHeight = 18.sp,
+                                    modifier = Modifier.padding(12.dp)
+                                )
+                            }
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF00C853).copy(alpha = 0.08f),
+                                border = BorderStroke(1.dp, Color(0xFF00C853).copy(alpha = 0.25f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = "پاسخ پشتیبانی",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF00C853)
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = successTicket.reply,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        lineHeight = 19.sp
+                                    )
+                                }
+                            }
+                        }
+
+                        successTicket.updated_at?.takeIf { it.isNotBlank() }?.let { updated ->
+                            Text(
+                                text = "آخرین به‌روزرسانی: ${PersianDateHelper.formatIso8601UtcToPersian(updated)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                            )
+                        }
+                        successTicket.created_at?.takeIf { it.isNotBlank() }?.let { created ->
+                            Text(
+                                text = "زمان ثبت: ${PersianDateHelper.formatIso8601UtcToPersian(created)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                            )
+                        }
+                    }
+                }
+                else -> {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ErrorOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(40.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = errorMessage ?: "دریافت وضعیت تیکت ممکن نشد.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                enabled = !isLoading,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.height(44.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text("بستن", fontWeight = FontWeight.Bold)
+            }
+        }
+    )
 }

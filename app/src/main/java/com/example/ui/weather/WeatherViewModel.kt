@@ -291,6 +291,26 @@ class WeatherViewModel(
     private val _activationUiState = MutableStateFlow<ActivationUiState>(ActivationUiState.Idle)
     val activationUiState = _activationUiState.asStateFlow()
 
+    // Support-ticket submission state (fire-and-forget from Settings)
+    private val _ticketUiState = MutableStateFlow<TicketUiState>(TicketUiState.Idle)
+    val ticketUiState = _ticketUiState.asStateFlow()
+
+    // Last submitted ticket id (persisted so the user can follow up on a reply)
+    private val _ticketId = MutableStateFlow("")
+    val ticketId = _ticketId.asStateFlow()
+
+    // Follow-up lookup state (fetched on demand when the user taps «پیگیری تیکت»)
+    private val _ticketLookupState = MutableStateFlow<TicketLookupUiState>(TicketLookupUiState.Idle)
+    val ticketLookupState = _ticketLookupState.asStateFlow()
+
+    fun resetTicketUiState() {
+        _ticketUiState.value = TicketUiState.Idle
+    }
+
+    fun resetTicketLookupState() {
+        _ticketLookupState.value = TicketLookupUiState.Idle
+    }
+
     fun resetActivationUiState() {
         _activationUiState.value = ActivationUiState.Idle
     }
@@ -683,6 +703,11 @@ class WeatherViewModel(
         viewModelScope.launch {
             settingsDataStore.subscriptionExpiresAt.collect { expiresAt ->
                 _subscriptionExpiresAt.value = expiresAt
+            }
+        }
+        viewModelScope.launch {
+            settingsDataStore.ticketId.collect { id ->
+                _ticketId.value = id
             }
         }
 
@@ -1180,6 +1205,151 @@ class WeatherViewModel(
         }
     }
 
+    /**
+     * Registers a support ticket with the Cloudflare worker (POST /api/tickets).
+     *
+     * Device/diagnostic metadata (model, Android SDK, app version, premium state)
+     * is auto-filled so the developer can debug subscription/payment issues without
+     * asking the user. Submission is fire-and-forget: on failure we surface an error
+     * but the email fallback in Settings remains available.
+     */
+    fun submitTicket(
+        context: android.content.Context,
+        email: String,
+        subject: String,
+        description: String
+    ) {
+        if (description.isBlank()) {
+            _ticketUiState.value = TicketUiState.Error("لطفاً شرح مشکل را وارد کنید.")
+            return
+        }
+        _ticketUiState.value = TicketUiState.Loading
+        viewModelScope.launch {
+            try {
+                val url = "https://activation-codes-admin.persianboy-1991g.workers.dev/api/tickets"
+                val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+
+                val deviceInfo = mapOf(
+                    "model" to android.os.Build.MODEL,
+                    "manufacturer" to android.os.Build.MANUFACTURER,
+                    "sdk" to android.os.Build.VERSION.SDK_INT,
+                    "appVersion" to com.example.BuildConfig.VERSION_NAME,
+                    "premium" to isPremium.value
+                )
+                val requestObj = mapOf(
+                    "email" to email.trim(),
+                    "subject" to subject.trim(),
+                    "description" to description.trim(),
+                    "premium" to isPremium.value,
+                    "device" to deviceInfo
+                )
+                val jsonRequest = moshi.adapter(Map::class.java).toJson(requestObj)
+                val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
+                val body = jsonRequest.toRequestBody(mediaType)
+
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+
+                val request = okhttp3.Request.Builder()
+                    .url(url)
+                    .post(body)
+                    .header("Accept", "application/json")
+                    .header("User-Agent", "IranMountainWeather-Android")
+                    .build()
+
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    client.newCall(request).execute().use { response ->
+                        val responseBody = response.body?.string()
+                        if (response.isSuccessful && !responseBody.isNullOrBlank()) {
+                            val adapter = moshi.adapter(TicketResponse::class.java)
+                            val res = adapter.fromJson(responseBody)
+                            if (res != null && res.success == true) {
+                                val newId = res.ticket_id ?: ""
+                                if (newId.isNotBlank()) {
+                                    // Persist so the user can follow up on the reply later.
+                                    settingsDataStore.setTicketId(newId)
+                                }
+                                _ticketUiState.value = TicketUiState.Success(newId)
+                            } else {
+                                _ticketUiState.value = TicketUiState.Error(
+                                    parseErrorMessage(responseBody) ?: "تیکت ثبت نشد. لطفا دوباره تلاش کنید."
+                                )
+                            }
+                        } else if (response.code == 503) {
+                            // Ticket system not yet enabled on the server -> point to email.
+                            _ticketUiState.value = TicketUiState.Error(
+                                "سیستم ثبت تیکت فعلا در دسترس نیست. لطفا از ایمیل پشتیبانی استفاده کنید."
+                            )
+                        } else {
+                            _ticketUiState.value = TicketUiState.Error(
+                                parseErrorMessage(responseBody ?: "") ?: "خطا در ثبت تیکت (کد: ${response.code})."
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("WeatherViewModel", "Exception while submitting ticket", e)
+                _ticketUiState.value = TicketUiState.Error("اتصال برقرار نشد. لطفا اینترنت را بررسی و دوباره تلاش کنید.")
+            }
+        }
+    }
+
+    /**
+     * Follows up on the last submitted ticket (GET /api/tickets/<id>).
+     * On demand only — called when the user taps «پیگیری تیکت», so it never
+     * runs on app start and adds no steady cost. The public endpoint returns
+     * only {id, subject, status, reply, created_at, updated_at}.
+     */
+    fun checkTicketStatus() {
+        val id = _ticketId.value
+        if (id.isBlank()) {
+            _ticketLookupState.value = TicketLookupUiState.Error("هیچ تیکتی ثبت نشده است.")
+            return
+        }
+        _ticketLookupState.value = TicketLookupUiState.Loading
+        viewModelScope.launch {
+            try {
+                val url = "https://activation-codes-admin.persianboy-1991g.workers.dev/api/tickets/" + id
+                val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                val request = okhttp3.Request.Builder()
+                    .url(url)
+                    .get()
+                    .header("Accept", "application/json")
+                    .header("User-Agent", "IranMountainWeather-Android")
+                    .build()
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    client.newCall(request).execute().use { response ->
+                        val responseBody = response.body?.string()
+                        if (response.isSuccessful && !responseBody.isNullOrBlank()) {
+                            val adapter = moshi.adapter(TicketLookupResponse::class.java)
+                            val res = adapter.fromJson(responseBody)
+                            if (res != null && res.success == true && res.ticket != null) {
+                                _ticketLookupState.value = TicketLookupUiState.Success(res.ticket)
+                            } else {
+                                _ticketLookupState.value = TicketLookupUiState.Error("تیکت یافت نشد.")
+                            }
+                        } else if (response.code == 404) {
+                            _ticketLookupState.value = TicketLookupUiState.Error("تیکت یافت نشد. ممکن است پاک شده باشد.")
+                        } else if (response.code == 503) {
+                            _ticketLookupState.value = TicketLookupUiState.Error("سیستم تیکت فعلا در دسترس نیست.")
+                        } else {
+                            _ticketLookupState.value = TicketLookupUiState.Error("خطا در دریافت وضعیت تیکت (کد: ${response.code}).")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("WeatherViewModel", "Exception while checking ticket status", e)
+                _ticketLookupState.value = TicketLookupUiState.Error("اتصال برقرار نشد. لطفا اینترنت را بررسی و دوباره تلاش کنید.")
+            }
+        }
+    }
+
     private fun parseErrorMessage(json: String): String? {
         return try {
             val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
@@ -1343,3 +1513,38 @@ data class CheckSubscriptionResponse(
     val active: Boolean?,
     val expires_at: String?
 )
+
+sealed class TicketUiState {
+    object Idle : TicketUiState()
+    object Loading : TicketUiState()
+    data class Success(val ticketId: String) : TicketUiState()
+    data class Error(val message: String) : TicketUiState()
+}
+
+data class TicketResponse(
+    val success: Boolean?,
+    val ticket_id: String?,
+    val status: String?
+)
+
+// Follow-up lookup: public GET /api/tickets/<id> returns a reduced public shape.
+data class TicketLookupData(
+    val id: String?,
+    val subject: String?,
+    val status: String?,
+    val reply: String?,
+    val created_at: String?,
+    val updated_at: String?
+)
+
+data class TicketLookupResponse(
+    val success: Boolean?,
+    val ticket: TicketLookupData?
+)
+
+sealed class TicketLookupUiState {
+    object Idle : TicketLookupUiState()
+    object Loading : TicketLookupUiState()
+    data class Success(val ticket: TicketLookupData) : TicketLookupUiState()
+    data class Error(val message: String) : TicketLookupUiState()
+}

@@ -236,4 +236,34 @@ object PersianDateHelper {
         }
         return formatToPersianDigits(isoDateTime) // fallback
     }
+
+    /**
+     * Parses a full ISO-8601 timestamp as emitted by the Cloudflare worker,
+     * e.g. "2026-09-09T23:52:49.931Z" (UTC, optional fractional seconds) and
+     * renders it as a Jalali (Shamsi) date + Tehran-local time, e.g.
+     * "۱۴۰۵/۰۶/۱۸ - ۰۲:۵۲".
+     *
+     * The worker's getTicketPublic returns created_at/updated_at in this exact
+     * shape, so this is the contract parser for the ticket follow-up screen.
+     * A trailing 'Z' means UTC; we parse in UTC to get the correct absolute
+     * instant, then re-format in Asia/Tehran (see getPersianDateTimeString).
+     */
+    fun formatIso8601UtcToPersian(isoUtc: String): String {
+        if (isoUtc.isBlank()) return ""
+        val trimmed = isoUtc.trim()
+        // Normalize: strip 'Z', keep the fractional seconds if present.
+        val noZ = trimmed.removeSuffix("Z").removeSuffix("z")
+        val hasMillis = noZ.substringAfterLast('.', "").count { it.isDigit() } >= 3
+        val pattern = if (hasMillis) "yyyy-MM-dd'T'HH:mm:ss.SSS" else "yyyy-MM-dd'T'HH:mm:ss"
+        try {
+            val sdf = SimpleDateFormat(pattern, Locale.US)
+            sdf.timeZone = TimeZone.getTimeZone("UTC")
+            sdf.isLenient = false
+            val instant = sdf.parse(noZ) ?: return formatIsoDateTimeToPersian(trimmed)
+            return getPersianDateTimeString(instant)
+        } catch (e: Exception) {
+            // Fall back to the simpler parser (handles yyyy-MM-dd'T'HH:mm etc.)
+            return formatIsoDateTimeToPersian(trimmed)
+        }
+    }
 }

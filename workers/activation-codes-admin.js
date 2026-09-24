@@ -19,6 +19,13 @@ const RL_TTL               = 300;
 const LOGIN_RL_LIMIT       = 5;   // /api/login
 const VERIFY_RL_LIMIT      = 5;   // /api/verify
 const CHECK_RL_LIMIT       = 10;  // /api/check-code, /api/check-subscription
+const TICKET_RL_LIMIT      = 3;   // /api/tickets POST (public, anti-spam)
+const TICKET_GET_RL_LIMIT  = 20;  // /api/tickets/<id> GET (public, per-IP tracking)
+const TICKET_KEY_PREFIX    = "t:"; // پیشوند کلیدهای تیکت در KV
+const TICKET_MAX_DESC      = 2000; // حداکثر طول توضیحات
+const TICKET_MAX_SUBJECT   = 200;
+const TICKET_MAX_EMAIL     = 200;
+const TICKET_MAX_REPLY     = 4000;
 
 // Constant-time login delay (mitigates user-enumeration / timing attacks)
 const LOGIN_CONST_DELAY    = 400;
@@ -105,6 +112,16 @@ export default {
       if (path === "/api/check-code" && request.method === "POST") {
         return await checkCode(request, env, allowedOrigins);
       }
+      // Public ticket submission (anti-spam rate-limited per IP).
+      if (path === "/api/tickets" && request.method === "POST") {
+        return await createTicket(request, env, allowedOrigins);
+      }
+      // Public ticket lookup by id (app "follow up"). id is 24 random hex chars
+      // -> unguessable; rate-limited per IP; never returns the submitter IP.
+      const publicTicketMatch = path.match(/^\/api\/tickets\/([0-9a-f]{12,64})$/);
+      if (publicTicketMatch && request.method === "GET") {
+        return await getTicketPublic(request, env, publicTicketMatch[1], allowedOrigins);
+      }
 
       // ---------- Admin API (protected) ----------
       if (path.startsWith("/api/")) {
@@ -180,6 +197,22 @@ async function handleAdminAPI(request, env, path, allowedOrigins, SESSION_TTL, C
   // Legacy deactivate endpoint
   if (path === "/api/subscription" && method === "DELETE") {
     return deactivateSubscription(request, env, allowedOrigins);
+  }
+
+  // ---------- Tickets (admin) ----------
+  if (path === "/api/tickets") {
+    if (method === "GET") return listTickets(request, env, allowedOrigins);
+    return methodError(request, allowedOrigins);
+  }
+  const ticketMatch = path.match(/^\/api\/tickets\/([^/]+)$/);
+  if (ticketMatch) {
+    const ticketId = safeDecode(ticketMatch[1]);
+    if (!ticketId || ticketId.length > 64) {
+      return json({ error: "شناسه تیکت نامعتبر" }, 400, {}, request, allowedOrigins);
+    }
+    if (method === "PUT") return updateTicket(request, env, ticketId, allowedOrigins);
+    if (method === "DELETE") return deleteTicket(request, env, ticketId, allowedOrigins);
+    return methodError(request, allowedOrigins);
   }
 
   return json({ error: "مسیر API نامعتبر" }, 404, {}, request, allowedOrigins);
@@ -640,6 +673,224 @@ async function deactivateSubscription(request, env, allowedOrigins) {
   return json({ success: true, message: "اشتراک غیرفعال شد" }, 200, {}, request, allowedOrigins);
 }
 
+// =============================================================
+// Tickets — سیستم پشتیبانی (تیکت)
+// KV: env.TICKETS (اختیاری). اگر نباشد، endpointها 503 برمی‌گردانند
+// و بقیه‌ی ورکر (کدها/اشتراک) دست‌نخورده کار می‌کنند.
+// =============================================================
+
+// Helper: validate + trim a ticket text field
+function ticketText(value, max) {
+  if (typeof value !== "string") return "";
+  const s = value.trim();
+  return s.length > max ? s.slice(0, max) : s;
+}
+
+// Helper: build a safe ticket object from a KV raw value
+function ticketFromKV(id, raw) {
+  let d;
+  try { d = JSON.parse(raw); } catch { return null; }
+  // id may be a KV key (with "t:" prefix) or a bare id — normalize
+  const bareId = String(id).replace(TICKET_KEY_PREFIX, "");
+  return {
+    id:          d.id || bareId,
+    email:       d.email || "",
+    subject:     d.subject || "",
+    description: d.description || "",
+    device:      d.device || null,
+    premium:     d.premium === true,
+    status:      ["open", "in_progress", "resolved"].includes(d.status) ? d.status : "open",
+    reply:       d.reply || null,
+    created_at:  d.created_at || null,
+    updated_at:  d.updated_at || d.created_at || null,
+    ip:          d.ip || null,
+  };
+}
+
+// -------------------------------------------------------------
+// Public API: Create a support ticket (anti-spam rate-limited)
+// -------------------------------------------------------------
+async function createTicket(request, env, allowedOrigins) {
+  if (!env.TICKETS) {
+    return json({ error: "سیستم تیکت هنوز فعال نیست، لطفاً از ایمیل پشتیبانی استفاده کنید." }, 503, {}, request, allowedOrigins);
+  }
+  const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
+  if (await isRateLimited(env, `ticket:${ip}`, TICKET_RL_LIMIT)) {
+    return json({ error: "درخواست‌های زیادی ثبت کرده‌اید، چند دقیقه دیگر تلاش کنید." }, 429, {}, request, allowedOrigins);
+  }
+
+  let body;
+  try { body = await request.json(); } catch {
+    return json({ error: "داده نامعتبر" }, 400, {}, request, allowedOrigins);
+  }
+  if (!body || typeof body !== "object") {
+    return json({ error: "داده نامعتبر" }, 400, {}, request, allowedOrigins);
+  }
+
+  const description = ticketText(body.description, TICKET_MAX_DESC);
+  const subject     = ticketText(body.subject, TICKET_MAX_SUBJECT);
+  const email       = ticketText(body.email, TICKET_MAX_EMAIL);
+  if (!description) {
+    return json({ error: "شرح مشکل الزامی است" }, 400, {}, request, allowedOrigins);
+  }
+  // email optional but validated if present
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json({ error: "آدرس ایمیل نامعتبر است" }, 400, {}, request, allowedOrigins);
+  }
+
+  // device: only whitelist the fields the app actually sends (public endpoint —
+  // never accept an arbitrary object: a hostile client could stuff megabytes into KV)
+  let dev = null;
+  if (body.device && typeof body.device === "object") {
+    const d = body.device;
+    dev = {
+      model:        typeof d.model === "string"        ? d.model.slice(0, 100)        : null,
+      manufacturer: typeof d.manufacturer === "string" ? d.manufacturer.slice(0, 100) : null,
+      sdk:          Number.isInteger(d.sdk)            ? d.sdk                        : null,
+      appVersion:   typeof d.appVersion === "string"   ? d.appVersion.slice(0, 50)    : null,
+      premium:      d.premium === true,
+    };
+  }
+  const now = new Date().toISOString();
+  const id  = randomHex(12);
+  const key = TICKET_KEY_PREFIX + id;
+
+  const ticket = {
+    id:          id,
+    email:       email,
+    subject:     subject,
+    description: description,
+    device:      dev,
+    premium:     body.premium === true,
+    status:      "open",
+    reply:       null,
+    created_at:  now,
+    updated_at:  now,
+    ip:          ip,
+  };
+  await env.TICKETS.put(key, JSON.stringify(ticket));
+  return json({ success: true, ticket_id: id, status: "open" }, 200, {}, request, allowedOrigins);
+}
+
+// -------------------------------------------------------------
+// Public API: Fetch a single ticket by id (app follow-up).
+// The 24-char random hex id acts as the capability token — no
+// other auth. We never leak the submitter IP or other tenants' data.
+// -------------------------------------------------------------
+async function getTicketPublic(request, env, ticketId, allowedOrigins) {
+  if (!env.TICKETS) {
+    return json({ error: "سیستم تیکت هنوز فعال نیست" }, 503, {}, request, allowedOrigins);
+  }
+  const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown";
+  if (await isRateLimited(env, `ticketget:${ip}`, TICKET_GET_RL_LIMIT)) {
+    return json({ error: "درخواست‌های زیادی ارسال کرده‌اید، چند دقیقه دیگر تلاش کنید." }, 429, {}, request, allowedOrigins);
+  }
+  const raw = await env.TICKETS.get(TICKET_KEY_PREFIX + ticketId);
+  if (!raw) {
+    // Same 404 for "not found" as for a malformed id — do not reveal existence.
+    return json({ error: "تیکت یافت نشد" }, 404, {}, request, allowedOrigins);
+  }
+  const t = ticketFromKV(ticketId, raw);
+  if (!t) {
+    return json({ error: "تیکت یافت نشد" }, 404, {}, request, allowedOrigins);
+  }
+  // Public shape: only what the customer needs to follow up.
+  return json({
+    success: true,
+    ticket: {
+      id:          t.id,
+      subject:     t.subject,
+      status:      t.status,
+      reply:       t.reply,
+      created_at:  t.created_at,
+      updated_at:  t.updated_at,
+    }
+  }, 200, {}, request, allowedOrigins);
+}
+
+// -------------------------------------------------------------
+// Admin API: List tickets (newest first, optional status filter)
+// -------------------------------------------------------------
+async function listTickets(request, env, allowedOrigins) {
+  if (!env.TICKETS) {
+    return json({ error: "سیستم تیکت هنوز فعال نیست" }, 503, {}, request, allowedOrigins);
+  }
+  const url   = new URL(request.url);
+  const status = (url.searchParams.get("status") || "").trim();
+  const limit = Math.min(parseInt(url.searchParams.get("limit") || String(MAX_LIST_ITEMS), 10) || MAX_LIST_ITEMS, MAX_LIST_ITEMS);
+
+  const items = [];
+  let cursor;
+  do {
+    const result = await env.TICKETS.list({ prefix: TICKET_KEY_PREFIX, limit: 100, cursor });
+    for (const key of result.keys) {
+      if (items.length >= MAX_LIST_ITEMS) break;
+      const raw = await env.TICKETS.get(key.name);
+      if (!raw) continue;
+      const t = ticketFromKV(key.name, raw);
+      if (!t) continue;
+      if (status && t.status !== status) continue;
+      items.push(t);
+    }
+    cursor = result.cursor;
+  } while (cursor && items.length < MAX_LIST_ITEMS);
+
+  // newest first
+  items.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+  return json({ items: items.slice(0, limit), total: items.length }, 200, {}, request, allowedOrigins);
+}
+
+// -------------------------------------------------------------
+// Admin API: Update ticket (status and/or reply)
+// -------------------------------------------------------------
+async function updateTicket(request, env, ticketId, allowedOrigins) {
+  if (!env.TICKETS) {
+    return json({ error: "سیستم تیکت هنوز فعال نیست" }, 503, {}, request, allowedOrigins);
+  }
+  const key = TICKET_KEY_PREFIX + ticketId;
+  const raw = await env.TICKETS.get(key);
+  if (!raw) return json({ error: "تیکت یافت نشد" }, 404, {}, request, allowedOrigins);
+  let data;
+  try { data = JSON.parse(raw); } catch {
+    return json({ error: "داده‌ی تیکت خراب است" }, 500, {}, request, allowedOrigins);
+  }
+
+  let body;
+  try { body = await request.json(); } catch {
+    return json({ error: "داده نامعتبر" }, 400, {}, request, allowedOrigins);
+  }
+  if (!body || typeof body !== "object") {
+    return json({ error: "داده نامعتبر" }, 400, {}, request, allowedOrigins);
+  }
+
+  if ("status" in body) {
+    if (!["open", "in_progress", "resolved"].includes(body.status)) {
+      return json({ error: "وضعیت نامعتبر (open|in_progress|resolved)" }, 400, {}, request, allowedOrigins);
+    }
+    data.status = body.status;
+  }
+  if ("reply" in body) {
+    data.reply = ticketText(body.reply, TICKET_MAX_REPLY) || null;
+  }
+  data.updated_at = new Date().toISOString();
+  await env.TICKETS.put(key, JSON.stringify(data));
+  return json({ success: true, ticket: ticketFromKV(ticketId, JSON.stringify(data)) }, 200, {}, request, allowedOrigins);
+}
+
+// -------------------------------------------------------------
+// Admin API: Delete ticket
+// -------------------------------------------------------------
+async function deleteTicket(request, env, ticketId, allowedOrigins) {
+  if (!env.TICKETS) {
+    return json({ error: "سیستم تیکت هنوز فعال نیست" }, 503, {}, request, allowedOrigins);
+  }
+  const key = TICKET_KEY_PREFIX + ticketId;
+  const raw = await env.TICKETS.get(key);
+  if (!raw) return json({ error: "تیکت یافت نشد" }, 404, {}, request, allowedOrigins);
+  await env.TICKETS.delete(key);
+  return json({ success: true }, 200, {}, request, allowedOrigins);
+}
+
 // -------------------------------------------------------------
 // Auth
 // -------------------------------------------------------------
@@ -881,10 +1132,6 @@ function generateCode() {
     }
   }
   return out.match(/.{1,4}/g).join("-");
-}
-
-function generateSessionId() {
-  return randomHex(32);
 }
 
 function getSessionId(request, COOKIE_NAME) {
@@ -1253,6 +1500,10 @@ function getAdminHTML() {
     .badge-inactive { background: rgba(248,113,113,0.10); color: var(--danger); }
     .badge-used     { background: rgba(154,163,188,0.10); color: var(--text-2); }
     .badge-expired  { background: rgba(245,185,71,0.10);  color: var(--warning); }
+    /* ticket statuses: open=warning (needs attention), in_progress=info, resolved=success */
+    .badge-open      { background: rgba(245,185,71,0.12);  color: var(--warning); }
+    .badge-in-progress { background: rgba(96,165,250,0.12); color: #60a5fa; }
+    .badge-resolved  { background: rgba(74,222,128,0.10);  color: var(--success); }
 
     .toolbar {
       display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
@@ -1698,9 +1949,9 @@ function getAdminHTML() {
             <div class="form-group">
               <label class="form-label" for="expires">تاریخ انقضا (اختیاری) – به وقت UTC</label>
               <div class="dp"
-                   x-data="datePicker()"
+                   x-data="datePicker('create')"
                    x-init="initPicker($el, newCodeExpires)"
-                   @expiry-sync.window="syncFromISO($event.detail.iso)">
+                   @expiry-sync.window="if ($event.detail.target === pickerId) syncFromISO($event.detail.iso)">
                 <input id="expires" type="text" class="dp-input" :value="displayValue"
                        @click="toggle($event)" placeholder="انتخاب تاریخ شمسی" readonly autocomplete="off">
                 <button type="button" class="dp-clear" x-show="displayValue" @click.stop="clear()" aria-label="پاک کردن">
@@ -1796,6 +2047,7 @@ function getAdminHTML() {
       <div class="tabs">
         <button class="tab-btn" :class="{ active: activeTab === 'codes' }" @click="switchTab('codes')">کدها</button>
         <button class="tab-btn" :class="{ active: activeTab === 'subscriptions' }" @click="switchTab('subscriptions')">اشتراک‌ها</button>
+        <button class="tab-btn" :class="{ active: activeTab === 'tickets' }" @click="switchTab('tickets')">تیکت‌ها <span x-show="openTicketCount > 0" class="badge" style="margin-inline-start:6px;" x-text="toPersianDigits(openTicketCount)"></span></button>
       </div>
 
       <!-- Codes List -->
@@ -1921,6 +2173,114 @@ function getAdminHTML() {
         </div>
       </div>
 
+      <!-- Tickets List -->
+      <div x-show="activeTab === 'tickets'" class="card">
+        <div class="card-head">
+          <div class="card-title"><span class="card-title-dot"></span><span>تیکت‌های پشتیبانی</span></div>
+          <span class="card-meta" x-text="toPersianDigits(filteredTickets.length) + ' / ' + toPersianDigits(tickets.length)"></span>
+        </div>
+
+        <div class="toolbar">
+          <div class="search">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="search" x-model="ticketSearchQuery" placeholder="جستجو بر اساس ایمیل یا موضوع...">
+          </div>
+          <div class="filters">
+            <button class="filter-btn" :class="{active: ticketFilter==='all'}"        @click="ticketFilter='all'">همه</button>
+            <button class="filter-btn" :class="{active: ticketFilter==='open'}"       @click="ticketFilter='open'">باز</button>
+            <button class="filter-btn" :class="{active: ticketFilter==='in_progress'}" @click="ticketFilter='in_progress'">در حال بررسی</button>
+            <button class="filter-btn" :class="{active: ticketFilter==='resolved'}"    @click="ticketFilter='resolved'">حل‌شده</button>
+          </div>
+        </div>
+
+        <div x-show="ticketLoading" class="loading"><div class="spinner spinner-lg" style="color: var(--primary);"></div></div>
+
+        <div x-show="ticketUnavailable" class="empty">
+          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <div class="empty-title">سیستم تیکت فعلا در دسترس نیست</div>
+          <div class="empty-text">برای فعال‌سازی، یک KV namespace به ورکر متصل کنید (متغیر محیطی TICKETS). تا آن زمان تیکت‌ها از طریق ایمیل پشتیبانی ثبت می‌شوند.</div>
+        </div>
+
+        <div x-show="!ticketLoading && !ticketUnavailable">
+          <div x-show="filteredTickets.length === 0" class="empty">
+            <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+            </svg>
+            <div class="empty-title" x-text="tickets.length === 0 ? 'هنوز تیکی ثبت نشده' : 'نتیجه‌ای یافت نشد'"></div>
+            <div class="empty-text" x-text="tickets.length === 0 ? 'تیکت‌های ارسالی از اپلیکیشن اینجا نمایش داده می‌شوند' : 'فیلتر یا جستجو را تغییر دهید'"></div>
+          </div>
+
+          <div x-show="filteredTickets.length > 0">
+            <div class="table-wrap">
+              <table class="table">
+                <thead><tr><th>موضوع</th><th>ایمیل</th><th>وضعیت</th><th>ثبت</th><th>عملیات</th></tr></thead>
+                <template x-for="tk in filteredTickets" :key="tk.id">
+                  <tbody>
+                    <tr :style="tk.id === ticketDetailId ? 'background: rgba(59,130,246,0.06);' : ''">
+                      <td>
+                        <div style="font-weight: 600;" x-text="tk.subject || '—'"></div>
+                        <div style="color: var(--text-3); font-size: 12px; margin-top: 2px;" x-text="(tk.device && tk.device.model) ? (tk.device.model + (tk.device.premium ? ' · پرو' : '')) : (tk.premium ? 'پرو' : '')"></div>
+                      </td>
+                      <td x-text="tk.email || '—'" style="font-size: 12px;"></td>
+                      <td><span class="badge" :class="getTicketStatusClass(tk)" x-text="getTicketStatusText(tk)"></span></td>
+                      <td><div class="date-cell"><span x-text="formatDate(tk.created_at)"></span><span class="date-rel" x-text="getRelativeTime(tk.created_at)"></span></div></td>
+                      <td><div class="actions">
+                        <button class="btn btn-sm btn-primary" @click="toggleTicketDetail(tk)"><span x-text="tk.id === ticketDetailId ? 'بستن' : 'مشاهده'"></span></button>
+                        <template x-if="tk.status !== 'resolved'">
+                          <button class="btn btn-sm btn-success" @click="setTicketStatus(tk, 'resolved')">حل‌شده</button>
+                        </template>
+                        <button class="btn btn-sm btn-danger btn-icon" @click="confirmDeleteTicket(tk)" aria-label="حذف"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>
+                      </div></td>
+                    </tr>
+                    <tr x-show="tk.id === ticketDetailId">
+                      <td colspan="5" style="background: rgba(0,0,0,0.15); padding: 14px 16px;">
+                        <div style="white-space: pre-wrap; line-height: 1.7; max-width: 720px;" x-text="tk.description"></div>
+
+                        <template x-if="tk.device">
+                          <div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px;">
+                            <template x-for="kv in ticketDeviceChips(tk.device)" :key="kv.label">
+                              <span class="badge" style="cursor: default;" x-text="kv.label + ': ' + kv.value"></span>
+                            </template>
+                          </div>
+                        </template>
+
+                        <template x-if="tk.reply">
+                          <div style="margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.25); max-width: 720px;">
+                            <div style="font-size: 11px; font-weight: 700; color: var(--success); margin-bottom: 4px;">پاسخ ثبت‌شده</div>
+                            <div style="white-space: pre-wrap; line-height: 1.7;" x-text="tk.reply"></div>
+                          </div>
+                        </template>
+
+                        <div style="margin-top: 10px; max-width: 720px;">
+                          <div class="form-label" style="margin-bottom: 4px;">ثبت/ویرایش پاسخ (برای اطلاع از طریق ایمیل استفاده می‌شود)</div>
+                          <textarea class="form-input" rows="3" x-model="ticketReplyDraft" placeholder="متن پاسخ..."
+                            style="width: 100%; resize: vertical; font-family: inherit;"></textarea>
+                          <div style="display: flex; gap: 8px; margin-top: 8px;">
+                            <button class="btn btn-sm btn-primary" @click="saveTicketReply(tk)" :disabled="ticketSavingReply">
+                              <span x-show="!ticketSavingReply">ذخیره پاسخ</span><span x-show="ticketSavingReply" class="spinner"></span>
+                            </button>
+                            <template x-if="tk.status !== 'in_progress' && tk.status !== 'resolved'">
+                              <button class="btn btn-sm" @click="setTicketStatus(tk, 'in_progress')">در حال بررسی</button>
+                            </template>
+                            <template x-if="tk.status !== 'open'">
+                              <button class="btn btn-sm" @click="setTicketStatus(tk, 'open')">بازگشت به باز</button>
+                            </template>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </template>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </template>
 
@@ -1949,8 +2309,8 @@ function getAdminHTML() {
       <div class="modal" role="dialog" aria-modal="true">
         <div class="modal-title">تأیید حذف</div>
         <div class="modal-text">
-          آیا از حذف <span x-text="confirmModal.type === 'code' ? 'کد' : 'اشتراک'"></span>
-          <code x-text="confirmModal.type === 'code' ? confirmModal.item.code : confirmModal.item.subscription_id"></code> مطمئن هستید؟
+          آیا از حذف <span x-text="confirmModal.type === 'code' ? 'کد' : (confirmModal.type === 'subscription' ? 'اشتراک' : 'تیکت')"></span>
+          <code x-text="confirmModal.type === 'code' ? confirmModal.item.code : (confirmModal.type === 'subscription' ? confirmModal.item.subscription_id : confirmModal.item.id)"></code> مطمئن هستید؟
         </div>
         <div class="modal-actions">
           <button class="btn" @click="confirmModal = null">انصراف</button>
@@ -1970,9 +2330,9 @@ function getAdminHTML() {
           <div class="form-group" style="margin-top: 12px;">
             <label class="form-label">تاریخ جدید (شمسی)</label>
             <div class="dp"
-                x-data="datePicker()"
+                x-data="datePicker('extend')"
                 x-init="initPicker($el, extendModal && extendModal.newExpiry)"
-                @expiry-sync.window="syncFromISO($event.detail.iso)">
+                @expiry-sync.window="if ($event.detail.target === pickerId) syncFromISO($event.detail.iso)">
               <input type="text" class="dp-input" :value="displayValue"
                      @click="toggle($event)" placeholder="انتخاب تاریخ شمسی" readonly autocomplete="off">
               <button type="button" class="dp-clear" x-show="displayValue" @click.stop="clear()" aria-label="پاک کردن">
@@ -2034,8 +2394,9 @@ function getAdminHTML() {
 </div>
 
 <script>
-  function datePicker() {
+  function datePicker(pickerId = 'create') {
     return {
+      pickerId,
       open: false,
       selected: null,
       viewYear:  1403,
@@ -2181,7 +2542,7 @@ function getAdminHTML() {
         this.selected = null;
         if (this.rootEl) {
           this.rootEl.dispatchEvent(new CustomEvent('expiry-set', {
-            detail: { iso: null, action: 'clear' },
+            detail: { iso: null, action: 'clear', target: this.pickerId },
             bubbles: true
           }));
         }
@@ -2207,7 +2568,7 @@ function getAdminHTML() {
         if (!this.selected) {
           if (this.rootEl) {
             this.rootEl.dispatchEvent(new CustomEvent('expiry-set', {
-              detail: { iso: null },
+              detail: { iso: null, target: this.pickerId },
               bubbles: true
             }));
           }
@@ -2218,7 +2579,7 @@ function getAdminHTML() {
         const iso = p.toDate().toISOString();
         if (this.rootEl) {
           this.rootEl.dispatchEvent(new CustomEvent('expiry-set', {
-            detail: { iso: iso },
+            detail: { iso: iso, target: this.pickerId },
             bubbles: true
           }));
         }
@@ -2264,6 +2625,16 @@ function getAdminHTML() {
       subIsLoadingMore: false,
       subSearchTimeout: null,
 
+      tickets: [],
+      ticketLoading: false,
+      ticketUnavailable: false,
+      ticketSearchQuery: '',
+      ticketFilter: 'all',
+      ticketDetailId: null,
+      ticketReplyDraft: '',
+      ticketSavingReply: false,
+      ticketDelete: null,
+
       stats: {
         total: 0,
         activeCodes: 0,
@@ -2307,6 +2678,34 @@ function getAdminHTML() {
         return 'badge-active';
       },
 
+      getTicketStatusText(tk) {
+        switch (tk.status) {
+          case 'open': return 'باز';
+          case 'in_progress': return 'در حال بررسی';
+          case 'resolved': return 'حل‌شده';
+          default: return 'باز';
+        }
+      },
+      getTicketStatusClass(tk) {
+        switch (tk.status) {
+          case 'open': return 'badge-open';
+          case 'in_progress': return 'badge-in-progress';
+          case 'resolved': return 'badge-resolved';
+          default: return 'badge-open';
+        }
+      },
+      ticketDeviceChips(device) {
+        if (!device) return [];
+        const out = [];
+        const add = (label, value) => { if (value) out.push({ label, value: String(value) }); };
+        add('مدل', device.model);
+        add('سازنده', device.manufacturer);
+        add('Android API', device.sdk ? String(device.sdk) : null);
+        add('نسخه اپ', device.appVersion);
+        add('لایسنس', device.premium ? 'پرو' : 'رایگان');
+        return out;
+      },
+
       get filteredCodes() {
         let list = this.codes.slice();
         const now = new Date();
@@ -2343,6 +2742,23 @@ function getAdminHTML() {
         return list;
       },
 
+      get filteredTickets() {
+        let list = [...this.tickets];
+        if (this.ticketFilter !== 'all') list = list.filter(t => t.status === this.ticketFilter);
+        const q = this.ticketSearchQuery.trim().toLowerCase();
+        if (q) {
+          list = list.filter(t =>
+            (t.email || '').toLowerCase().includes(q) ||
+            (t.subject || '').toLowerCase().includes(q) ||
+            (t.description || '').toLowerCase().includes(q));
+        }
+        return list;
+      },
+
+      get openTicketCount() {
+        return this.tickets.filter(t => t.status === 'open').length;
+      },
+
       initApp() {
         this.loadCodes();
         this.loadSubscriptions();
@@ -2365,6 +2781,7 @@ function getAdminHTML() {
       switchTab(tab) {
         this.activeTab = tab;
         if (tab === 'subscriptions' && this.subscriptions.length === 0) this.loadSubscriptions();
+        if (tab === 'tickets' && this.tickets.length === 0 && !this.ticketUnavailable) this.loadTickets();
       },
 
       async loadCodes(append = false) {
@@ -2458,7 +2875,7 @@ function getAdminHTML() {
             this.newCodeActive = 'true';
             this.newCodeDuration = 30;
             this.activeChip = null;
-            window.dispatchEvent(new CustomEvent('expiry-sync', { detail: { iso: null } }));
+            window.dispatchEvent(new CustomEvent('expiry-sync', { detail: { iso: null, target: 'create' } }));
             this.updateStats();
             this.showToast('کد با موفقیت ایجاد شد', 'success');
           } else {
@@ -2508,6 +2925,7 @@ function getAdminHTML() {
       async performDelete() {
         if (!this.confirmModal) return;
         const { type, item } = this.confirmModal;
+        if (type === 'ticket') { await this.performDeleteTicket(); return; }
         this.confirmModal = null;
         try {
           let url;
@@ -2592,6 +3010,101 @@ function getAdminHTML() {
         }
       },
 
+      // ---------- Tickets ----------
+      async loadTickets() {
+        if (this.ticketLoading) return;
+        this.ticketLoading = true;
+        try {
+          const res = await fetch('/api/tickets', { credentials: 'same-origin' });
+          if (res.status === 401) { this.loggedIn = false; return; }
+          if (res.status === 503) { this.ticketUnavailable = true; this.tickets = []; return; }
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          this.tickets = data.items || [];
+          this.ticketUnavailable = false;
+        } catch (e) {
+          this.showToast('خطا در بارگذاری تیکت‌ها', 'error');
+        } finally {
+          this.ticketLoading = false;
+        }
+      },
+
+      toggleTicketDetail(tk) {
+        if (this.ticketDetailId === tk.id) {
+          this.ticketDetailId = null;
+          this.ticketReplyDraft = '';
+        } else {
+          this.ticketDetailId = tk.id;
+          this.ticketReplyDraft = tk.reply || '';
+        }
+      },
+
+      async setTicketStatus(tk, status) {
+        const original = tk.status;
+        tk.status = status;
+        try {
+          const res = await fetch('/api/tickets/' + encodeURIComponent(tk.id), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ status })
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          this.tickets = [...this.tickets];
+        } catch (e) {
+          tk.status = original;
+          this.showToast('تغییر وضعیت ثبت نشد', 'error');
+        }
+      },
+
+      async saveTicketReply(tk) {
+        this.ticketSavingReply = true;
+        try {
+          const res = await fetch('/api/tickets/' + encodeURIComponent(tk.id), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ reply: this.ticketReplyDraft })
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          if (data.ticket) {
+            const idx = this.tickets.findIndex(t => t.id === tk.id);
+            if (idx >= 0) this.tickets[idx] = data.ticket;
+            this.tickets = [...this.tickets];
+          }
+          this.ticketReplyDraft = '';
+          this.showToast('پاسخ ذخیره شد', 'success');
+        } catch (e) {
+          this.showToast('ذخیره پاسخ ناموفق بود', 'error');
+        } finally {
+          this.ticketSavingReply = false;
+        }
+      },
+
+      confirmDeleteTicket(tk) {
+        this.ticketDelete = { item: tk };
+        this.confirmModal = { type: 'ticket', item: tk };
+      },
+
+      async performDeleteTicket() {
+        const tk = this.confirmModal.item;
+        try {
+          const res = await fetch('/api/tickets/' + encodeURIComponent(tk.id), {
+            method: 'DELETE', credentials: 'same-origin'
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          this.tickets = this.tickets.filter(t => t.id !== tk.id);
+          if (this.ticketDetailId === tk.id) this.ticketDetailId = null;
+          this.showToast('تیکت حذف شد', 'success');
+        } catch (e) {
+          this.showToast('حذف تیکت ناموفق بود', 'error');
+        } finally {
+          this.confirmModal = null;
+          this.ticketDelete = null;
+        }
+      },
+
       async toggleSubActive(sub) {
         const newActive = !sub.active;
         const original = sub.active;
@@ -2627,7 +3140,7 @@ function getAdminHTML() {
         };
         setTimeout(() => {
           window.dispatchEvent(new CustomEvent('expiry-sync', {
-            detail: { iso: sub.expires_at || null }
+            detail: { iso: sub.expires_at || null, target: 'extend' }
           }));
         }, 80);
       },
@@ -2753,23 +3266,33 @@ function getAdminHTML() {
         d.setDate(d.getDate() + days);
         d.setHours(23, 59, 59, 999);
         this.newCodeExpires = d.toISOString();
-        window.dispatchEvent(new CustomEvent('expiry-sync', { detail: { iso: this.newCodeExpires } }));
+        window.dispatchEvent(new CustomEvent('expiry-sync', { detail: { iso: this.newCodeExpires, target: 'create' } }));
       },
       clearExpiry() {
         this.activeChip = 0;
         this.newCodeExpires = '';
-        window.dispatchEvent(new CustomEvent('expiry-sync', { detail: { iso: null } }));
+        window.dispatchEvent(new CustomEvent('expiry-sync', { detail: { iso: null, target: 'create' } }));
       },
       handleExpirySet(event) {
         const detail = event.detail || {};
-        if (detail.iso === null && detail.action === 'clear') {
+        const target = detail.target || 'create';
+        const iso = detail.iso;
+
+        if (target === 'extend') {
+          if (!this.extendModal) return;
+          if (iso === null && detail.action === 'clear') this.extendModal.newExpiry = null;
+          else if (iso !== null && iso !== undefined) this.extendModal.newExpiry = iso;
+          else this.extendModal.newExpiry = null;
+          return;
+        }
+
+        // target === 'create'
+        if (iso === null && detail.action === 'clear') {
           this.activeChip = null;
           this.newCodeExpires = '';
-          if (this.extendModal) this.extendModal.newExpiry = null;
-        } else if (detail.iso !== null && detail.iso !== undefined) {
-          this.newCodeExpires = detail.iso;
+        } else if (iso !== null && iso !== undefined) {
+          this.newCodeExpires = iso;
           this.activeChip = null;
-          if (this.extendModal) this.extendModal.newExpiry = detail.iso;
         } else {
           this.activeChip = null;
           this.newCodeExpires = '';

@@ -21,6 +21,7 @@ class SettingsDataStore(private val context: Context) {
         val ACTIVATION_CODE = stringPreferencesKey("activation_code")
         val SUBSCRIPTION_ID = stringPreferencesKey("subscription_id")
         val SUBSCRIPTION_EXPIRES_AT = stringPreferencesKey("subscription_expires_at")
+        val TICKET_ID = stringPreferencesKey("ticket_id")
     }
 
     val isPremium: Flow<Boolean> = context.settingsDataStore.data
@@ -47,6 +48,17 @@ class SettingsDataStore(private val context: Context) {
         .map { preferences ->
             preferences[SUBSCRIPTION_EXPIRES_AT] ?: ""
         }
+
+    val ticketId: Flow<String> = context.settingsDataStore.data
+        .map { preferences ->
+            preferences[TICKET_ID] ?: ""
+        }
+
+    suspend fun setTicketId(id: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[TICKET_ID] = id
+        }
+    }
 
     suspend fun setPremium(enabled: Boolean) {
         context.settingsDataStore.edit { preferences ->
