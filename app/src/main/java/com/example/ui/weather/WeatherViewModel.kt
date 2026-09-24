@@ -442,8 +442,8 @@ class WeatherViewModel(
     companion object {
         // URL پیشفرض همگامسازی اطلس = ورکر mountain-api (دیتابیس قلل)؛
         // mountain-weather-api پروکسی Open-Meteo است و پاسخ / آن شکل MountainSyncResponse ندارد.
-        const val PRODUCTION_WORKER_URL = "https://mountain-api.persianboy-1991g.workers.dev/"
-        const val BILLING_WORKER_URL = "https://ir-mountain-weather-billing.persianboy-1991g.workers.dev/"
+        const val PRODUCTION_WORKER_URL = "https://mountain-api.iranmountainweather.workers.dev/"
+        const val BILLING_WORKER_URL = "https://ir-mountain-weather-billing.iranmountainweather.workers.dev/"
     }
 
     private fun getPrefs(context: android.content.Context) =
@@ -1143,7 +1143,7 @@ class WeatherViewModel(
 
         viewModelScope.launch {
             try {
-                val url = "https://activation-codes-admin.persianboy-1991g.workers.dev/api/verify"
+                val url = "https://activation-codes-admin.iranmountainweather.workers.dev/api/verify"
                 val moshi = Moshi.Builder()
                     .add(KotlinJsonAdapterFactory())
                     .build()
@@ -1226,7 +1226,7 @@ class WeatherViewModel(
         _ticketUiState.value = TicketUiState.Loading
         viewModelScope.launch {
             try {
-                val url = "https://activation-codes-admin.persianboy-1991g.workers.dev/api/tickets"
+                val url = "https://activation-codes-admin.iranmountainweather.workers.dev/api/tickets"
                 val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
 
                 val deviceInfo = mapOf(
@@ -1311,7 +1311,7 @@ class WeatherViewModel(
         _ticketLookupState.value = TicketLookupUiState.Loading
         viewModelScope.launch {
             try {
-                val url = "https://activation-codes-admin.persianboy-1991g.workers.dev/api/tickets/" + id
+                val url = "https://activation-codes-admin.iranmountainweather.workers.dev/api/tickets/" + id
                 val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
                 val client = okhttp3.OkHttpClient.Builder()
                     .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
@@ -1391,7 +1391,7 @@ class WeatherViewModel(
             Log.d("WeatherViewModel", "Local activation info found. Checking subscription status on server...")
 
             try {
-                val url = "https://activation-codes-admin.persianboy-1991g.workers.dev/api/check-subscription"
+                val url = "https://activation-codes-admin.iranmountainweather.workers.dev/api/check-subscription"
                 val moshi = Moshi.Builder()
                     .add(KotlinJsonAdapterFactory())
                     .build()

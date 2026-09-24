@@ -21,7 +21,7 @@ object RetrofitHelper {
             null
         }
         val finalUrl = if (configUrl.isNullOrBlank() || configUrl == "OPEN_METEO_BASE_URL" || configUrl.contains("MY_")) {
-            "https://mountain-weather-api.persianboy-1991g.workers.dev/"
+            "https://mountain-weather-api.iranmountainweather.workers.dev/"
         } else {
             if (configUrl.endsWith("/")) configUrl else "$configUrl/"
         }
