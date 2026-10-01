@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="108" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1B2A4A"/>
+      <stop offset="1" stop-color="#0083B0"/>
+    </linearGradient>
+  </defs>
+  <!-- background -->
+  <path d="M0,0h108v108h-108z" fill="url(#bg)"/>
+  <!-- golden sun -->
+  <circle cx="54" cy="42" r="16" fill="#FFFFCC33"/>
+  <!-- left peak -->
+  <path d="M16,80 L38,44 L60,80 Z" fill="#88FFFFFF"/>
+  <!-- right peak -->
+  <path d="M48,80 L68,48 L88,80 Z" fill="#BBFFFFFF"/>
+  <!-- center peak -->
+  <path d="M30,80 L54,34 L78,80 Z" fill="#FFFFFFFF"/>
+  <!-- snow-cap accent -->
+  <path d="M54,34 L48,46 L53,49 L52,56 L55,54 L59,62" fill="none" stroke="#DDFFFFFF" stroke-width="1.2"/>
+</svg>
