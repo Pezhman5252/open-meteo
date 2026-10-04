@@ -107,14 +107,16 @@ class SupportTicketContractTest {
     // --- follow-up: public GET /api/tickets/<id> response shape (worker source of truth) ---
     @Test
     fun `parses worker public ticket lookup response`() {
-        // workers/activation-codes-admin.js -> getTicketPublic returns exactly:
-        // { success: true, ticket: { id, subject, status, reply, created_at, updated_at } }
+        // workers/activation-codes-admin.js -> getTicketPublic returns:
+        // { success: true, ticket: { id, subject, description, status, reply, created_at, updated_at } }
+        // (description added 2026-10-04 so the user can see their own text)
         val json = """
             {
               "success": true,
               "ticket": {
                 "id": "a1b2c3d4e5f6a1b2c3d4e5f6",
                 "subject": "خرید فعال نشد",
+                "description": "خرید کردم ولی اشتراک فعال نشد",
                 "status": "in_progress",
                 "reply": "بررسی شد، فعال شد",
                 "created_at": "2026-09-24T00:00:00.000Z",
@@ -128,8 +130,32 @@ class SupportTicketContractTest {
         assertNotNull(res.ticket)
         assertEquals("a1b2c3d4e5f6a1b2c3d4e5f6", res.ticket!!.id)
         assertEquals("خرید فعال نشد", res.ticket!!.subject)
+        assertEquals("خرید کردم ولی اشتراک فعال نشد", res.ticket!!.description)
         assertEquals("in_progress", res.ticket!!.status)
         assertEquals("بررسی شد، فعال شد", res.ticket!!.reply)
+    }
+
+    @Test
+    fun `parses ticket lookup from old worker without description (null safe)`() {
+        // Worker revisions deployed before 2026-10-04 omit `description` —
+        // Moshi must leave it null (UI then falls back to local ticketDescription).
+        val json = """
+            {
+              "success": true,
+              "ticket": {
+                "id": "ffffffffffffffffffffffff",
+                "subject": "موضوع قدیمی",
+                "status": "resolved",
+                "reply": "پاسخ",
+                "created_at": "2026-09-24T00:00:00.000Z",
+                "updated_at": "2026-09-24T00:00:00.000Z"
+              }
+            }
+        """.trimIndent()
+        val res = moshi.adapter(TicketLookupResponse::class.java).fromJson(json)
+        assertNotNull(res)
+        assertEquals("resolved", res!!.ticket!!.status)
+        assertTrue(res.ticket!!.description == null)
     }
 
     @Test

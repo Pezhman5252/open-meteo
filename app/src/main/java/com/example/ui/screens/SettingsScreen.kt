@@ -122,6 +122,9 @@ fun SettingsScreen(
     // ---------- Ticket follow-up state ----------
     val ticketId by viewModel.ticketId.collectAsStateWithLifecycle()
     val ticketLookupState by viewModel.ticketLookupState.collectAsStateWithLifecycle()
+    // متن توضیح آخرین تیکت (ذخیره‌ی محلی) — فالبک برای تیکت‌هایی که قبل از
+    // بازگشت description توسط ورکر ساخته شده‌اند.
+    val ticketLocalDescription by viewModel.ticketDescription.collectAsStateWithLifecycle()
     var showTicketLookupDialog by remember { mutableStateOf(false) }
 
     // Note: on submit success we intentionally keep the dialog open and swap its
@@ -2061,6 +2064,7 @@ fun SettingsScreen(
             if (showTicketLookupDialog) {
                 TicketLookupDialog(
                     lookupState = ticketLookupState,
+                    localDescription = ticketLocalDescription,
                     onDismiss = {
                         showTicketLookupDialog = false
                         viewModel.resetTicketLookupState()
@@ -2304,6 +2308,21 @@ private fun SupportTicketDialog(
     val successTicketId = (uiState as? TicketUiState.Success)?.ticketId ?: ""
     val errorMessage = (uiState as? TicketUiState.Error)?.message
 
+    // ---- Live field validation (same rules the ViewModel enforces on submit) ----
+    // MAX values mirror the worker limits (2000 / 200 / 200).
+    val descLength = descriptionState.length
+    val subjectLength = subjectState.length
+    val descOverLimit = descLength > 2000
+    val subjectOverLimit = subjectLength > 200
+    val emailInvalid = emailState.isNotBlank() &&
+            !Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$").matches(emailState.trim())
+    val formValid = descriptionState.isNotBlank() &&
+            descLength in 3..2000 &&
+            subjectLength <= 200 &&
+            (emailState.isBlank() || emailState.trim().length <= 200) &&
+            !emailInvalid &&
+            !isLoading
+
     AlertDialog(
         onDismissRequest = { if (!isLoading) onDismiss() },
         containerColor = MaterialTheme.colorScheme.surface,
@@ -2383,6 +2402,10 @@ private fun SupportTicketDialog(
                     value = emailState,
                     onValueChange = onEmailChange,
                     label = { Text("ایمیل برای پاسخ (اختیاری)") },
+                    supportingText = if (emailInvalid) {
+                        { Text("آدرس ایمیل نامعتبر است. فرمت صحیح: name@example.com") }
+                    } else null,
+                    isError = emailInvalid,
                     singleLine = true,
                     enabled = !isLoading,
                     keyboardOptions = KeyboardOptions(
@@ -2400,6 +2423,12 @@ private fun SupportTicketDialog(
                     value = subjectState,
                     onValueChange = onSubjectChange,
                     label = { Text("موضوع (اختیاری)") },
+                    supportingText = if (subjectOverLimit) {
+                        { Text("موضوع حداکثر ۲۰۰ کاراکتر است.") }
+                    } else {
+                        { Text(PersianDateHelper.formatToPersianDigits("$subjectLength/200")) }
+                    },
+                    isError = subjectOverLimit,
                     singleLine = true,
                     enabled = !isLoading,
                     modifier = Modifier.fillMaxWidth().testTag("ticket_subject_field")
@@ -2409,6 +2438,14 @@ private fun SupportTicketDialog(
                     value = descriptionState,
                     onValueChange = onDescriptionChange,
                     label = { Text("توضیح مشکل *") },
+                    supportingText = {
+                        Text(
+                            text = if (descOverLimit) "توضیح حداکثر ۲۰۰۰ کاراکتر است."
+                                   else PersianDateHelper.formatToPersianDigits("$descLength/2000"),
+                            color = if (descOverLimit) MaterialTheme.colorScheme.error else Color.Unspecified
+                        )
+                    },
+                    isError = descOverLimit,
                     minLines = 4,
                     maxLines = 8,
                     enabled = !isLoading,
@@ -2450,7 +2487,7 @@ private fun SupportTicketDialog(
             } else {
             Button(
                 onClick = onSubmit,
-                enabled = !isLoading && descriptionState.isNotBlank(),
+                enabled = formValid,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.height(44.dp)
             ) {
@@ -2484,6 +2521,7 @@ private fun SupportTicketDialog(
 @Composable
 private fun TicketLookupDialog(
     lookupState: TicketLookupUiState,
+    localDescription: String,
     onDismiss: () -> Unit
 ) {
     val isLoading = lookupState is TicketLookupUiState.Loading
@@ -2584,6 +2622,34 @@ private fun TicketLookupDialog(
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.Medium
                                 )
+                            }
+                        }
+
+                        // توضیح خود کاربر — تا کوهنورد یادش نرود چه نوشته بود.
+                        // اول متن سرور (description در پاسخ پیگیری)، در غیر این صورت
+                        // ذخیره‌ی محلی (فالبک برای تیکت‌های قدیمی).
+                        val userDescription = successTicket.description?.takeIf { it.isNotBlank() }
+                            ?: localDescription.takeIf { it.isNotBlank() }
+                        if (userDescription != null) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = "توضیح شما",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = userDescription,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        lineHeight = 19.sp
+                                    )
+                                }
                             }
                         }
 

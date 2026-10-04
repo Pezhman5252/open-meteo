@@ -23,6 +23,10 @@ class SettingsDataStore(private val context: Context) {
         val SUBSCRIPTION_ID = stringPreferencesKey("subscription_id")
         val SUBSCRIPTION_EXPIRES_AT = stringPreferencesKey("subscription_expires_at")
         val TICKET_ID = stringPreferencesKey("ticket_id")
+        // متنِ توضیحی که کاربر برای آخرین تیکت ارسال کرده — در «پیگیری تیکت» نمایش
+        // داده می‌شود تا کاربر یادش نرود دقیقاً چه نوشته (ورکر description را هم
+        // برمی‌گرداند؛ این ذخیره‌ی محلی فالبک برای تیکت‌های قدیمی است).
+        val TICKET_DESCRIPTION = stringPreferencesKey("ticket_description")
         val UPDATE_LAST_SHOWN_AT = longPreferencesKey("update_last_shown_at")
         val UPDATE_DISMISSED_VERSION = stringPreferencesKey("update_dismissed_version")
     }
@@ -57,6 +61,11 @@ class SettingsDataStore(private val context: Context) {
             preferences[TICKET_ID] ?: ""
         }
 
+    val ticketDescription: Flow<String> = context.settingsDataStore.data
+        .map { preferences ->
+            preferences[TICKET_DESCRIPTION] ?: ""
+        }
+
     val updateLastShownAt: Flow<Long> = context.settingsDataStore.data
         .map { preferences ->
             preferences[UPDATE_LAST_SHOWN_AT] ?: 0L
@@ -70,6 +79,13 @@ class SettingsDataStore(private val context: Context) {
     suspend fun setTicketId(id: String) {
         context.settingsDataStore.edit { preferences ->
             preferences[TICKET_ID] = id
+        }
+    }
+
+    /** Last ticket the user created — stores the description they wrote. */
+    suspend fun setTicketDescription(description: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[TICKET_DESCRIPTION] = description
         }
     }
 

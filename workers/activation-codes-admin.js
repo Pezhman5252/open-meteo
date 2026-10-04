@@ -682,7 +682,15 @@ async function deactivateSubscription(request, env, allowedOrigins) {
 // Helper: validate + trim a ticket text field
 function ticketText(value, max) {
   if (typeof value !== "string") return "";
-  const s = value.trim();
+  // Remove C0/C1 control chars (keep \t \n) — blocks NUL and other control
+  // sequences that could confuse downstream renderers or logs.
+  let s = value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+  // Strip stray HTML/XML tag tokens (defense-in-depth; the admin panel renders
+  // with Alpine x-text = escaped, but stored content should stay plain text).
+  s = s.replace(/<\/?[a-zA-Z][^>]*>/g, " ");
+  // Normalize line endings; cap blank lines at one so a hostile "wall of
+  // newlines" can't bloat the payload (max already truncates length).
+  s = s.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   return s.length > max ? s.slice(0, max) : s;
 }
 
@@ -795,11 +803,14 @@ async function getTicketPublic(request, env, ticketId, allowedOrigins) {
     return json({ error: "تیکت یافت نشد" }, 404, {}, request, allowedOrigins);
   }
   // Public shape: only what the customer needs to follow up.
+  // description is the customer's OWN text — safe to return to the owner; the id
+  // is a 24-hex capability token so no one else can read it.
   return json({
     success: true,
     ticket: {
       id:          t.id,
       subject:     t.subject,
+      description: t.description,
       status:      t.status,
       reply:       t.reply,
       created_at:  t.created_at,

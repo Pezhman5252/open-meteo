@@ -299,6 +299,13 @@ class WeatherViewModel(
     private val _ticketId = MutableStateFlow("")
     val ticketId = _ticketId.asStateFlow()
 
+    // The description text the user wrote for the last ticket — shown in the
+    // follow-up dialog so they can recall what they asked. Persisted locally as
+    // a fallback for tickets created before the worker started returning
+    // `description` in the public lookup response.
+    private val _ticketDescription = MutableStateFlow("")
+    val ticketDescription = _ticketDescription.asStateFlow()
+
     // Follow-up lookup state (fetched on demand when the user taps «پیگیری تیکت»)
     private val _ticketLookupState = MutableStateFlow<TicketLookupUiState>(TicketLookupUiState.Idle)
     val ticketLookupState = _ticketLookupState.asStateFlow()
@@ -783,6 +790,11 @@ class WeatherViewModel(
         viewModelScope.launch {
             settingsDataStore.ticketId.collect { id ->
                 _ticketId.value = id
+            }
+        }
+        viewModelScope.launch {
+            settingsDataStore.ticketDescription.collect { desc ->
+                _ticketDescription.value = desc
             }
         }
 
@@ -1294,10 +1306,40 @@ class WeatherViewModel(
         subject: String,
         description: String
     ) {
+        // ---- Client-side validation (mirrors the worker's limits) ----
+        // Lengths match activation-codes-admin.js: TICKET_MAX_DESC=2000,
+        // TICKET_MAX_SUBJECT=200, TICKET_MAX_EMAIL=200. We BLOCK over-limit input
+        // (rather than silently truncate) so the user can't push an oversized or
+        // code-laden payload.
+        val cleanDesc = sanitizeTicketField(description, 2000)
+        val cleanSubject = sanitizeTicketField(subject, 200)
+        val cleanEmail = email.trim()
+
         if (description.isBlank()) {
             _ticketUiState.value = TicketUiState.Error("لطفاً شرح مشکل را وارد کنید.")
             return
         }
+        if (cleanDesc.length < 3) {
+            _ticketUiState.value = TicketUiState.Error("توضیح مشکل خیلی کوتاه است؛ حداقل چند کلمه بنویسید.")
+            return
+        }
+        if (cleanDesc.length > 2000) {
+            _ticketUiState.value = TicketUiState.Error("توضیح مشکل بسیار طولانی است (حداکثر ۲۰۰۰ کاراکتر).")
+            return
+        }
+        if (cleanSubject.length > 200) {
+            _ticketUiState.value = TicketUiState.Error("موضوع بسیار طولانی است (حداکثر ۲۰۰ کاراکتر).")
+            return
+        }
+        if (cleanEmail.length > 200) {
+            _ticketUiState.value = TicketUiState.Error("آدرس ایمیل بسیار طولانی است.")
+            return
+        }
+        if (cleanEmail.isNotBlank() && !Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$").matches(cleanEmail)) {
+            _ticketUiState.value = TicketUiState.Error("آدرس ایمیل نامعتبر است. فرمت صحیح: name@example.com")
+            return
+        }
+
         _ticketUiState.value = TicketUiState.Loading
         viewModelScope.launch {
             try {
@@ -1312,9 +1354,9 @@ class WeatherViewModel(
                     "premium" to isPremium.value
                 )
                 val requestObj = mapOf(
-                    "email" to email.trim(),
-                    "subject" to subject.trim(),
-                    "description" to description.trim(),
+                    "email" to cleanEmail,
+                    "subject" to cleanSubject,
+                    "description" to cleanDesc,
                     "premium" to isPremium.value,
                     "device" to deviceInfo
                 )
@@ -1343,8 +1385,12 @@ class WeatherViewModel(
                             if (res != null && res.success == true) {
                                 val newId = res.ticket_id ?: ""
                                 if (newId.isNotBlank()) {
-                                    // Persist so the user can follow up on the reply later.
+                                    // Persist id + the description the user wrote,
+                                    // so «پیگیری تیکت» can show them their own text
+                                    // even before/without the worker returning it.
                                     settingsDataStore.setTicketId(newId)
+                                    settingsDataStore.setTicketDescription(cleanDesc)
+                                    _ticketDescription.value = cleanDesc
                                 }
                                 _ticketUiState.value = TicketUiState.Success(newId)
                             } else {
@@ -1372,10 +1418,26 @@ class WeatherViewModel(
     }
 
     /**
+     * Cleans a user-entered ticket field for safe transport/storage:
+     *  - strips C0/C1 control chars (keeps \t \n) — blocks NUL & control sequences
+     *  - removes stray HTML/XML tag tokens — blocks pasted `<script>…</script>` etc.
+     *    (the admin panel renders with escaped x-text, but stored content stays plain)
+     *  - trims and caps length at [max]
+     * The worker re-applies the same rules server-side, so this is defense-in-depth.
+     */
+    private fun sanitizeTicketField(raw: String, max: Int): String {
+        var s = raw.replace(Regex("[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]"), "")
+        s = s.replace(Regex("<\\/?[a-zA-Z][^>]*>"), " ")
+        s = s.replace(Regex("\r\n?"), "\n").replace(Regex("\n{3,}"), "\n\n").trim()
+        return if (s.length > max) s.take(max) else s
+    }
+
+    /**
      * Follows up on the last submitted ticket (GET /api/tickets/<id>).
      * On demand only — called when the user taps «پیگیری تیکت», so it never
      * runs on app start and adds no steady cost. The public endpoint returns
-     * only {id, subject, status, reply, created_at, updated_at}.
+     * {id, subject, description, status, reply, created_at, updated_at} — the
+     * description is the user's own text so they can recall what they asked.
      */
     fun checkTicketStatus() {
         val id = _ticketId.value
@@ -1603,9 +1665,14 @@ data class TicketResponse(
 )
 
 // Follow-up lookup: public GET /api/tickets/<id> returns a reduced public shape.
+// description = متن خودِ کاربر تا در «پیگیری تیکت» هم موضوع، هم متن خودش و هم
+// پاسخ پشتیبانی را ببیند.
 data class TicketLookupData(
     val id: String?,
     val subject: String?,
+    // Old deployed worker revisions don't return this field; Moshi leaves it null
+    // and the UI falls back to the locally saved ticketDescription.
+    val description: String? = null,
     val status: String?,
     val reply: String?,
     val created_at: String?,
