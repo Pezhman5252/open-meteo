@@ -164,7 +164,14 @@ class MountainRepository(private val mountainDao: MountainDao) {
                     return@withContext SyncResult.Error("خطا در آنالیز فایل دیتابیس جیسون: ${e.localizedMessage}")
                 } ?: return@withContext SyncResult.Error("اطلاعات دریافتی خالی است")
 
-                if (syncData.version <= currentVersion) {
+                // درِ نسخه: فقط وقتی «نسخه‌ی سرور <= نسخه‌ی دستگاه» به‌روزرسانی
+                // انجام نمی‌شود — مگر اینکه دیتابیس محلی خالی باشد. دیتابیسِ خالی
+                // (مثلا‌ بعد از پاک‌کردن کش/داده، یا هر خرابی که Room را صفر کرده
+                // باشد) همیشه باید از سرور پر شود، حتی اگر نسخه‌ها برابر باشند؛
+                // وگرنه دستگاه فقط ۷۵ قله‌ی داخلیِ ensureSeeded را نگه می‌دارد و
+                // پیام دروغین «کاملا‌ به‌روز» می‌بیند.
+                val localCount = mountainDao.getMountainCount()
+                if (syncData.version <= currentVersion && localCount > 0) {
                     return@withContext SyncResult.NoUpdate(syncData.version)
                 }
 

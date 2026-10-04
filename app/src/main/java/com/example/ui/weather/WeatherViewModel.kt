@@ -494,7 +494,7 @@ class WeatherViewModel(
         _cachedMountainIds.value = cached
     }
 
-    private val _dbVersion = MutableStateFlow(1)
+    private val _dbVersion = MutableStateFlow(0)
     val dbVersion = _dbVersion.asStateFlow()
 
     private val _lastSyncTime = MutableStateFlow("هنوز بروزرسانی انجام نشده")
@@ -509,8 +509,8 @@ class WeatherViewModel(
     companion object {
         // URL پیشفرض همگامسازی اطلس = ورکر mountain-api (دیتابیس قلل)؛
         // mountain-weather-api پروکسی Open-Meteo است و پاسخ / آن شکل MountainSyncResponse ندارد.
-        const val PRODUCTION_WORKER_URL = "https://mountain-api.iranmountainweather.workers.dev/"
-        const val BILLING_WORKER_URL = "https://ir-mountain-weather-billing.iranmountainweather.workers.dev/"
+        const val PRODUCTION_WORKER_URL = "https://mountain-api.iranmountainweather.ir/"
+        const val BILLING_WORKER_URL = "https://ir-mountain-weather-billing.iranmountainweather.ir/"
     }
 
     private fun getPrefs(context: android.content.Context) =
@@ -534,7 +534,11 @@ class WeatherViewModel(
 
     fun initSyncStates(context: android.content.Context) {
         val prefs = getPrefs(context)
-        _dbVersion.value = prefs.getInt("db_version", 1)
+        // 0 = «هنوز sync نشده» — هرگز از پیش‌فرض ۱ استفاده نکنید: اگر پیش‌فرض با
+        // نسخه‌ی سرور (مثلاً ۱) برابر باشد، درِ نسخه (server <= device → NoUpdate)
+        // اولین sync را روی نصبِ تازه مسدود می‌کند و کاربر فقط ۷۵ قله‌ی داخلیِ
+        // ensureSeeded را می‌بیند و هیچ‌وقت لیست کاملِ سرور را دریافت نمی‌کند.
+        _dbVersion.value = prefs.getInt("db_version", 0)
         _lastSyncTime.value = prefs.getString("last_sync_time", "هنوز بروزرسانی انجام نشده") ?: "هنوز بروزرسانی انجام نشده"
         _lastSyncAdded.value = prefs.getInt("last_sync_added", 0)
         _lastSyncUpdated.value = prefs.getInt("last_sync_updated", 0)
@@ -556,7 +560,11 @@ class WeatherViewModel(
     }
 
     fun getDbVersion(context: android.content.Context): Int {
-        return getPrefs(context).getInt("db_version", 1)
+        // پیش‌فرض ۰ = «هنوز sync نشده» (نه ۱!). با پیش‌فرض ۱، وقتی نسخه‌ی سرور هم
+        // ۱ باشد، درِ نسخه server<=device اولین sync روی نصبِ تازه را می‌بندد و
+        // کاربر فقط ۷۵ قله‌ی داخلیِ ensureSeeded را می‌بیند. با ۰، هر نسخه‌ی سرور
+        // (≥۱) بزرگ‌تر است و اولین sync همیشه انجام می‌شود.
+        return getPrefs(context).getInt("db_version", 0)
     }
 
     fun getLastSyncTime(context: android.content.Context): String {
@@ -631,7 +639,7 @@ class WeatherViewModel(
                         rawMsg.contains("timeout", ignoreCase = true) -> {
                             "زمان انتظار برای اتصال به سرور به پایان رسید."
                         }
-                        rawMsg.contains("workers.dev", ignoreCase = true) || rawMsg.contains("50") -> {
+                        rawMsg.contains("iranmountainweather.ir", ignoreCase = true) || rawMsg.contains("50") -> {
                             "اختلال موقت در سرور ابری همگام‌سازی."
                         }
                         else -> {
@@ -925,7 +933,7 @@ class WeatherViewModel(
                     WeatherErrorType.TIMEOUT
                 )
             }
-            msg.contains("workers.dev", ignoreCase = true) ||
+            msg.contains("iranmountainweather.ir", ignoreCase = true) ||
             msg.contains("500") ||
             msg.contains("502") ||
             msg.contains("503") ||
@@ -1210,7 +1218,7 @@ class WeatherViewModel(
 
         viewModelScope.launch {
             try {
-                val url = "https://activation-codes-admin.iranmountainweather.workers.dev/api/verify"
+                val url = "https://activation-codes-admin.iranmountainweather.ir/api/verify"
                 val moshi = Moshi.Builder()
                     .add(KotlinJsonAdapterFactory())
                     .build()
@@ -1293,7 +1301,7 @@ class WeatherViewModel(
         _ticketUiState.value = TicketUiState.Loading
         viewModelScope.launch {
             try {
-                val url = "https://activation-codes-admin.iranmountainweather.workers.dev/api/tickets"
+                val url = "https://activation-codes-admin.iranmountainweather.ir/api/tickets"
                 val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
 
                 val deviceInfo = mapOf(
@@ -1378,7 +1386,7 @@ class WeatherViewModel(
         _ticketLookupState.value = TicketLookupUiState.Loading
         viewModelScope.launch {
             try {
-                val url = "https://activation-codes-admin.iranmountainweather.workers.dev/api/tickets/" + id
+                val url = "https://activation-codes-admin.iranmountainweather.ir/api/tickets/" + id
                 val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
                 val client = okhttp3.OkHttpClient.Builder()
                     .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
@@ -1458,7 +1466,7 @@ class WeatherViewModel(
             Log.d("WeatherViewModel", "Local activation info found. Checking subscription status on server...")
 
             try {
-                val url = "https://activation-codes-admin.iranmountainweather.workers.dev/api/check-subscription"
+                val url = "https://activation-codes-admin.iranmountainweather.ir/api/check-subscription"
                 val moshi = Moshi.Builder()
                     .add(KotlinJsonAdapterFactory())
                     .build()

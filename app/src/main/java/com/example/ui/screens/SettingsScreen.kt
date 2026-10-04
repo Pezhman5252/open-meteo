@@ -1496,7 +1496,7 @@ fun SettingsScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                                 )
                                 Text(
-                                    text = "v$dbVersion",
+                                    text = if (dbVersion > 0) "v$dbVersion" else "هنوز بارگذاری نشده",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Black,
                                     color = MaterialTheme.colorScheme.primary
