@@ -43,6 +43,7 @@ import android.net.Uri
 import com.example.ui.weather.ActivationUiState
 import com.example.ui.weather.SyncUiState
 import com.example.ui.weather.TicketLookupUiState
+import com.example.ui.weather.TicketUpdateAlert
 import com.example.ui.weather.TicketUiState
 import com.example.ui.weather.WeatherViewModel
 import java.text.SimpleDateFormat
@@ -122,6 +123,7 @@ fun SettingsScreen(
     // ---------- Ticket follow-up state ----------
     val ticketId by viewModel.ticketId.collectAsStateWithLifecycle()
     val ticketLookupState by viewModel.ticketLookupState.collectAsStateWithLifecycle()
+    val ticketNewUpdate by viewModel.ticketNewUpdate.collectAsStateWithLifecycle()
     // متن توضیح آخرین تیکت (ذخیره‌ی محلی) — فالبک برای تیکت‌هایی که قبل از
     // بازگشت description توسط ورکر ساخته شده‌اند.
     val ticketLocalDescription by viewModel.ticketDescription.collectAsStateWithLifecycle()
@@ -1977,14 +1979,48 @@ fun SettingsScreen(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "پیگیری تیکت",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    // نشان «به‌روزرسانی جدید» — توسط چکِ بی‌صدا (وقتی اپ
+                                    // باز است) تنظیم می‌شود؛ متنش با نوع تغییر (پاسخ
+                                    // جدید یا فقط تغییر وضعیت) یکی است؛ با باز کردن
+                                    // دایالوگ و دیدن وضعیت حذف می‌شود.
+                                    if (ticketNewUpdate != TicketUpdateAlert.None) {
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = MaterialTheme.colorScheme.tertiary
+                                        ) {
+                                            Text(
+                                                text = when (ticketNewUpdate) {
+                                                    TicketUpdateAlert.NEW_REPLY -> "پاسخ جدید"
+                                                    else -> "به‌روزرسانی"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                    }
+                                }
                                 Text(
-                                    text = "پیگیری تیکت",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "وضعیت و پاسخ پشتیبانی را ببینید",
+                                    text = when (ticketNewUpdate) {
+                                        TicketUpdateAlert.NEW_REPLY ->
+                                            "پاسخ پشتیبانی ثبت شده است"
+                                        TicketUpdateAlert.NEW_STATUS ->
+                                            "وضعیت تیکت به‌روز شده است"
+                                        else ->
+                                            "وضعیت و پاسخ پشتیبانی را ببینید"
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                                 )
@@ -2309,16 +2345,16 @@ private fun SupportTicketDialog(
     val errorMessage = (uiState as? TicketUiState.Error)?.message
 
     // ---- Live field validation (same rules the ViewModel enforces on submit) ----
-    // MAX values mirror the worker limits (2000 / 200 / 200).
+    // MAX values mirror the worker limits (500 / 50 / 200).
     val descLength = descriptionState.length
     val subjectLength = subjectState.length
-    val descOverLimit = descLength > 2000
-    val subjectOverLimit = subjectLength > 200
+    val descOverLimit = descLength > 500
+    val subjectOverLimit = subjectLength > 50
     val emailInvalid = emailState.isNotBlank() &&
             !Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$").matches(emailState.trim())
     val formValid = descriptionState.isNotBlank() &&
-            descLength in 3..2000 &&
-            subjectLength <= 200 &&
+            descLength in 3..500 &&
+            subjectLength <= 50 &&
             (emailState.isBlank() || emailState.trim().length <= 200) &&
             !emailInvalid &&
             !isLoading
@@ -2424,9 +2460,9 @@ private fun SupportTicketDialog(
                     onValueChange = onSubjectChange,
                     label = { Text("موضوع (اختیاری)") },
                     supportingText = if (subjectOverLimit) {
-                        { Text("موضوع حداکثر ۲۰۰ کاراکتر است.") }
+                        { Text("موضوع حداکثر ۵۰ کاراکتر است.") }
                     } else {
-                        { Text(PersianDateHelper.formatToPersianDigits("$subjectLength/200")) }
+                        { Text(PersianDateHelper.formatToPersianDigits("$subjectLength/50")) }
                     },
                     isError = subjectOverLimit,
                     singleLine = true,
@@ -2440,8 +2476,8 @@ private fun SupportTicketDialog(
                     label = { Text("توضیح مشکل *") },
                     supportingText = {
                         Text(
-                            text = if (descOverLimit) "توضیح حداکثر ۲۰۰۰ کاراکتر است."
-                                   else PersianDateHelper.formatToPersianDigits("$descLength/2000"),
+                            text = if (descOverLimit) "توضیح حداکثر ۵۰۰ کاراکتر است."
+                                   else PersianDateHelper.formatToPersianDigits("$descLength/500"),
                             color = if (descOverLimit) MaterialTheme.colorScheme.error else Color.Unspecified
                         )
                     },

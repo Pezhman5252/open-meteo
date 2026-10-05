@@ -22,8 +22,8 @@ const CHECK_RL_LIMIT       = 10;  // /api/check-code, /api/check-subscription
 const TICKET_RL_LIMIT      = 3;   // /api/tickets POST (public, anti-spam)
 const TICKET_GET_RL_LIMIT  = 20;  // /api/tickets/<id> GET (public, per-IP tracking)
 const TICKET_KEY_PREFIX    = "t:"; // پیشوند کلیدهای تیکت در KV
-const TICKET_MAX_DESC      = 2000; // حداکثر طول توضیحات
-const TICKET_MAX_SUBJECT   = 200;
+const TICKET_MAX_DESC      = 500;  // حداکثر طول توضیحات
+const TICKET_MAX_SUBJECT   = 50;
 const TICKET_MAX_EMAIL     = 200;
 const TICKET_MAX_REPLY     = 4000;
 
@@ -777,7 +777,10 @@ async function createTicket(request, env, allowedOrigins) {
     ip:          ip,
   };
   await env.TICKETS.put(key, JSON.stringify(ticket));
-  return json({ success: true, ticket_id: id, status: "open" }, 200, {}, request, allowedOrigins);
+  // created_at is returned so the app can seed its "unread" watermark
+  // (ticket_reply_seen_at) with the exact submission instant; without it the
+  // app would fall back to its own clock.
+  return json({ success: true, ticket_id: id, status: "open", created_at: now }, 200, {}, request, allowedOrigins);
 }
 
 // -------------------------------------------------------------

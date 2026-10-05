@@ -27,6 +27,15 @@ class SettingsDataStore(private val context: Context) {
         // داده می‌شود تا کاربر یادش نرود دقیقاً چه نوشته (ورکر description را هم
         // برمی‌گرداند؛ این ذخیره‌ی محلی فالبک برای تیکت‌های قدیمی است).
         val TICKET_DESCRIPTION = stringPreferencesKey("ticket_description")
+        // آگاه‌سازی «پاسخ جدید تیکت»: armed = اپ منتظرِ پاسخی است که هنوز
+        // کاربر ندیده (true در لحظه‌ی ثبت تیکت، false وقتی کاربر پاسخ را باز
+        // کند و ببیند → صفر درخواست تا تیکت بعدی). seen_at = آخرین updated_at
+        // که کاربر دیده (واترمارک مقایسه‌ی بی‌صدا).
+        val TICKET_REPLY_ARMED = booleanPreferencesKey("ticket_reply_armed")
+        val TICKET_REPLY_SEEN_AT = stringPreferencesKey("ticket_reply_seen_at")
+        // The reply text the user last SAW. Lets the silent poll tell a new
+        // REPLY apart from a STATUS-ONLY change (drives badge/snackbar text).
+        val TICKET_REPLY_SEEN_REPLY = stringPreferencesKey("ticket_reply_seen_reply")
         val UPDATE_LAST_SHOWN_AT = longPreferencesKey("update_last_shown_at")
         val UPDATE_DISMISSED_VERSION = stringPreferencesKey("update_dismissed_version")
     }
@@ -66,6 +75,21 @@ class SettingsDataStore(private val context: Context) {
             preferences[TICKET_DESCRIPTION] ?: ""
         }
 
+    val ticketReplyArmed: Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences ->
+            preferences[TICKET_REPLY_ARMED] ?: false
+        }
+
+    val ticketReplySeenAt: Flow<String> = context.settingsDataStore.data
+        .map { preferences ->
+            preferences[TICKET_REPLY_SEEN_AT] ?: ""
+        }
+
+    val ticketReplySeenReply: Flow<String> = context.settingsDataStore.data
+        .map { preferences ->
+            preferences[TICKET_REPLY_SEEN_REPLY] ?: ""
+        }
+
     val updateLastShownAt: Flow<Long> = context.settingsDataStore.data
         .map { preferences ->
             preferences[UPDATE_LAST_SHOWN_AT] ?: 0L
@@ -86,6 +110,40 @@ class SettingsDataStore(private val context: Context) {
     suspend fun setTicketDescription(description: String) {
         context.settingsDataStore.edit { preferences ->
             preferences[TICKET_DESCRIPTION] = description
+        }
+    }
+
+    /**
+     * Called when a ticket is submitted: arms the "new reply" watcher and sets
+     * the seen-watermark to the submission instant (created_at from the worker,
+     * or the device clock as fallback) so the very first silent poll compares
+     * against "just submitted" and does not fire for the user's own ticket.
+     */
+    suspend fun armTicketReplyWatcher(seenAt: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[TICKET_REPLY_ARMED] = true
+            preferences[TICKET_REPLY_SEEN_AT] = seenAt
+            // A fresh ticket has no reply yet: "last seen reply" is empty, so a
+            // later poll can detect the first reply as a change.
+            preferences[TICKET_REPLY_SEEN_REPLY] = ""
+        }
+    }
+
+    /**
+     * Called when the user opens the follow-up dialog (sees the current state):
+     * advances the watermark to the latest updated_at and records the reply
+     * text they saw. Disarms the watcher ONLY when [disarm] — i.e. the user
+     * has seen a reply, or the ticket is resolved (no reply will come): from
+     * then on the app makes zero ticket requests until the next ticket. For a
+     * status-only change on a still-open ticket the watcher STAYS armed, so a
+     * reply posted afterwards still fires a "new reply" alert (still just one
+     * silent GET per 15 min).
+     */
+    suspend fun markTicketReplySeen(updatedAt: String, reply: String?, disarm: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[TICKET_REPLY_SEEN_AT] = updatedAt
+            preferences[TICKET_REPLY_SEEN_REPLY] = reply ?: ""
+            if (disarm) preferences[TICKET_REPLY_ARMED] = false
         }
     }
 

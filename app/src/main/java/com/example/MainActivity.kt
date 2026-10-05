@@ -57,8 +57,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import kotlinx.coroutines.delay
 import com.example.data.local.AppDatabase
 import com.example.data.remote.RetrofitHelper
 import com.example.data.repository.MountainRepository
@@ -72,6 +78,7 @@ import com.example.ui.theme.Vazirmatn
 import com.example.ui.util.BazaarBillingManager
 import ir.cafebazaar.poolakey.entity.PurchaseState
 import com.example.ui.weather.WeatherViewModel
+import com.example.ui.weather.TicketUpdateAlert
 import com.example.ui.weather.WeatherViewModelFactory
 
 class MainActivity : ComponentActivity() {
@@ -153,6 +160,44 @@ class MainActivity : ComponentActivity() {
             val showBillingDialog by viewModel.showBillingDialog.collectAsStateWithLifecycle()
             val updateReminderVersion by viewModel.updateReminderVersion.collectAsStateWithLifecycle()
             var currentTab by remember { mutableStateOf(AppTab.Dashboard) }
+
+            // ---------- «به‌روزرسانی تیکت از پشتیبانی» — silent foreground watcher ----------
+            // وقتی اپ foreground است، هر ۶۰ ثانیه یک بار maybeCheckTicketForNewUpdate
+            // صدا زده می‌شود؛ خودِ آن تابع با in-memory throttle (هر ۱۵ دقیقه) و
+            // درِ armed (خاموش بعد از دیده‌شدن وضعیت) مطمئن می‌شود که در واقع
+            // حداکثر یک GET در ۱۵ دقیقه — و بعد از باز کردن دایالوگ، صفر —
+            // درخواست تیکت برود. در background هیچ درخواستی ارسال نمی‌شود.
+            val ticketNewUpdate by viewModel.ticketNewUpdate.collectAsStateWithLifecycle()
+            val snackbarHostState = remember { SnackbarHostState() }
+            var replySnackbarShown by remember { mutableStateOf(false) }
+            val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+            LaunchedEffect(Unit) {
+                lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    while (true) {
+                        viewModel.maybeCheckTicketForNewUpdate()
+                        delay(60_000)
+                    }
+                }
+            }
+            // snackbar یک‌باره: فقط اولین بار برای هر به‌روزرسانی نمایش داده
+            // می‌شود؛ متن آن با نوع تغییر (پاسخ جدید یا فقط تغییر وضعیت) یکی
+            // است تا کاربر گمراه نشود. بَج روی ردیف تا وقتی کاربر دایالوگ را
+            // باز کند می‌ماند.
+            LaunchedEffect(ticketNewUpdate) {
+                if (ticketNewUpdate != TicketUpdateAlert.None && !replySnackbarShown) {
+                    snackbarHostState.showSnackbar(
+                        message = when (ticketNewUpdate) {
+                            TicketUpdateAlert.NEW_REPLY ->
+                                "پاسخ جدید از پشتیبانی — از «تنظیمات» ببینید"
+                            else ->
+                                "وضعیت تیکت شما به‌روز شده است — از «تنظیمات» ببینید"
+                        },
+                        duration = SnackbarDuration.Short
+                    )
+                    replySnackbarShown = true
+                }
+                if (ticketNewUpdate == TicketUpdateAlert.None) replySnackbarShown = false
+            }
 
             // Liquid-glass shared state: links the content backdrop to the glass bar.
             val glassState = com.example.ui.components.rememberLiquidGlassState()
@@ -336,6 +381,7 @@ class MainActivity : ComponentActivity() {
                         Scaffold(
                             modifier = Modifier.nestedScroll(nestedScrollConnection),
                             containerColor = Color.Transparent,
+                            snackbarHost = { SnackbarHost(snackbarHostState) },
                             bottomBar = {
                                 AnimatedVisibility(
                                     visible = isBottomBarVisible,

@@ -18,6 +18,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import java.util.UUID
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -306,6 +307,19 @@ class WeatherViewModel(
     private val _ticketDescription = MutableStateFlow("")
     val ticketDescription = _ticketDescription.asStateFlow()
 
+    // «به‌روزرسانی تیکت از پشتیبانی» — set by the silent watcher when the
+    // ticket's updated_at moves past the last-seen watermark. NEW_REPLY when
+    // the fetched reply text differs from the last one the user saw,
+    // NEW_STATUS for a status-only change. Cleared in-memory by
+    // markTicketReplySeen() (user opens the follow-up dialog) and on a new
+    // submit.
+    private val _ticketNewUpdate = MutableStateFlow(TicketUpdateAlert.None)
+    val ticketNewUpdate = _ticketNewUpdate.asStateFlow()
+
+    // Throttle stamp for the silent watcher (not persisted — a restart just
+    // allows one immediate re-check, which is at most one extra KV read).
+    @Volatile private var lastTicketPollMs = 0L
+
     // Follow-up lookup state (fetched on demand when the user taps «پیگیری تیکت»)
     private val _ticketLookupState = MutableStateFlow<TicketLookupUiState>(TicketLookupUiState.Idle)
     val ticketLookupState = _ticketLookupState.asStateFlow()
@@ -518,6 +532,10 @@ class WeatherViewModel(
         // mountain-weather-api پروکسی Open-Meteo است و پاسخ / آن شکل MountainSyncResponse ندارد.
         const val PRODUCTION_WORKER_URL = "https://mountain-api.iranmountainweather.ir/"
         const val BILLING_WORKER_URL = "https://ir-mountain-weather-billing.iranmountainweather.ir/"
+        // «پاسخ جدید از پشتیبانی» — حداقل فاصله‌ی زمانی بین دو چک بی‌صدا
+        // (throttling). فقط وقتی تیکتِ arm‌شده‌ی فعال وجود دارد و اپ foreground
+        // است اجرا می‌شود؛ بعد از دیده‌شدن پاسخ، درخواست صفر می‌شود.
+        const val TICKET_POLL_INTERVAL_MS = 15L * 60L * 1000L
     }
 
     private fun getPrefs(context: android.content.Context) =
@@ -795,6 +813,26 @@ class WeatherViewModel(
         viewModelScope.launch {
             settingsDataStore.ticketDescription.collect { desc ->
                 _ticketDescription.value = desc
+            }
+        }
+
+        // NOTE: there is deliberately NO collector on ticketReplySeenArmed/SeenAt
+        // here. The «پاسخ جدید» badge is cleared in-memory by markTicketReplySeen()
+        // (when the user opens the follow-up dialog) and re-armed by
+        // submitTicket(); a collector that cleared on the DataStore's *initial*
+        // emission would race the silent watcher on cold start and clear a fresh
+        // badge. armed/seen_at are persisted so they survive a restart.
+
+        // Cold-start responsiveness: as soon as the persisted ticket id loads
+        // (id transitions "" -> value), run one immediate watcher check so the
+        // «پاسخ جدید» badge appears within a couple of seconds of opening the app
+        // instead of waiting for the 60s tick. StateFlow conflates, so this only
+        // re-fires on an actual change; the in-memory throttle + armed gate inside
+        // maybeCheckTicketForNewUpdate() guarantee at most ONE real request and
+        // only while a ticket awaits a reply.
+        viewModelScope.launch {
+            _ticketId.collect { id ->
+                if (id.isNotBlank()) maybeCheckTicketForNewUpdate()
             }
         }
 
@@ -1307,12 +1345,12 @@ class WeatherViewModel(
         description: String
     ) {
         // ---- Client-side validation (mirrors the worker's limits) ----
-        // Lengths match activation-codes-admin.js: TICKET_MAX_DESC=2000,
-        // TICKET_MAX_SUBJECT=200, TICKET_MAX_EMAIL=200. We BLOCK over-limit input
-        // (rather than silently truncate) so the user can't push an oversized or
-        // code-laden payload.
-        val cleanDesc = sanitizeTicketField(description, 2000)
-        val cleanSubject = sanitizeTicketField(subject, 200)
+        // Lengths match activation-codes-admin.js: TICKET_MAX_DESC=500,
+        // TICKET_MAX_SUBJECT=50, TICKET_MAX_EMAIL=200. The UI gates the send
+        // button on these limits (formValid); these checks are the backstop so
+        // an oversized or code-laden payload can't reach the worker.
+        val cleanDesc = sanitizeTicketField(description, 500)
+        val cleanSubject = sanitizeTicketField(subject, 50)
         val cleanEmail = email.trim()
 
         if (description.isBlank()) {
@@ -1323,12 +1361,12 @@ class WeatherViewModel(
             _ticketUiState.value = TicketUiState.Error("توضیح مشکل خیلی کوتاه است؛ حداقل چند کلمه بنویسید.")
             return
         }
-        if (cleanDesc.length > 2000) {
-            _ticketUiState.value = TicketUiState.Error("توضیح مشکل بسیار طولانی است (حداکثر ۲۰۰۰ کاراکتر).")
+        if (cleanDesc.length > 500) {
+            _ticketUiState.value = TicketUiState.Error("توضیح مشکل بسیار طولانی است (حداکثر ۵۰۰ کاراکتر).")
             return
         }
-        if (cleanSubject.length > 200) {
-            _ticketUiState.value = TicketUiState.Error("موضوع بسیار طولانی است (حداکثر ۲۰۰ کاراکتر).")
+        if (cleanSubject.length > 50) {
+            _ticketUiState.value = TicketUiState.Error("موضوع بسیار طولانی است (حداکثر ۵۰ کاراکتر).")
             return
         }
         if (cleanEmail.length > 200) {
@@ -1391,6 +1429,22 @@ class WeatherViewModel(
                                     settingsDataStore.setTicketId(newId)
                                     settingsDataStore.setTicketDescription(cleanDesc)
                                     _ticketDescription.value = cleanDesc
+                                    // Arm the «پاسخ جدید از پشتیبانی» watcher. The
+                                    // watermark = the exact submission instant the
+                                    // worker reports (created_at); older deployed
+                                    // revisions omit it -> fall back to the device
+                                    // clock (UTC, same ISO-8601 format) so the
+                                    // first poll still compares fairly.
+                                    val watermark = res.created_at
+                                        ?: run {
+                                            val sdf = SimpleDateFormat(
+                                                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US
+                                            )
+                                            sdf.timeZone = TimeZone.getTimeZone("UTC")
+                                            sdf.format(Date())
+                                        }
+                                    _ticketNewUpdate.value = TicketUpdateAlert.None
+                                    settingsDataStore.armTicketReplyWatcher(watermark)
                                 }
                                 _ticketUiState.value = TicketUiState.Success(newId)
                             } else {
@@ -1468,6 +1522,19 @@ class WeatherViewModel(
                             val res = adapter.fromJson(responseBody)
                             if (res != null && res.success == true && res.ticket != null) {
                                 _ticketLookupState.value = TicketLookupUiState.Success(res.ticket)
+                                // The user opened the dialog = they can now see this
+                                // state: advance the watermark + record the reply
+                                // they saw, and clear the alert. Disarm only when
+                                // a reply was actually seen or the ticket is
+                                // resolved — a status-only look at a still-open
+                                // ticket keeps the watcher armed, so a later
+                                // reply still alerts (one GET / 15 min).
+                                val updatedAt = res.ticket.updated_at
+                                if (!updatedAt.isNullOrBlank()) {
+                                    val reply = res.ticket.reply
+                                    val disarm = !reply.isNullOrBlank() || res.ticket.status == "resolved"
+                                    markTicketReplySeen(updatedAt, reply, disarm)
+                                }
                             } else {
                                 _ticketLookupState.value = TicketLookupUiState.Error("تیکت یافت نشد.")
                             }
@@ -1484,6 +1551,95 @@ class WeatherViewModel(
                 Log.e("WeatherViewModel", "Exception while checking ticket status", e)
                 _ticketLookupState.value = TicketLookupUiState.Error("اتصال برقرار نشد. لطفا اینترنت را بررسی و دوباره تلاش کنید.")
             }
+        }
+    }
+
+    /**
+     * «پاسخ جدید از پشتیبانی» — silent, throttled, no-steady-load watcher.
+     *
+     * Called from MainActivity while the app is foreground. A request goes out
+     * ONLY when ALL of these hold:
+     *   1. a ticket exists,
+     *   2. the watcher is ARMED (armed at submit time; disarmed the moment the
+     *      user opens the follow-up dialog and sees the state),
+     *   3. at least [TICKET_POLL_INTERVAL_MS] (15 min) passed since the last poll.
+     *
+     * If the ticket's `updated_at` moved past the stored "seen" watermark, the
+     * support agent acted since the user last looked -> `ticketNewUpdate`
+     * (badge on the row + one-shot snackbar). Once the user opens the dialog,
+     * `markTicketReplySeen` advances the watermark and DISARMS the watcher, so
+     * from then on the app makes ZERO ticket requests until the next ticket.
+     * No polling, no push/FCM, no server-side queue — server cost is one KV
+     * read per 15 min while a ticket awaits a reply (within the existing
+     * ticketget:<ip> 20/5min rate limit), then zero.
+     */
+    fun maybeCheckTicketForNewUpdate() {
+        val id = _ticketId.value
+        if (id.isBlank()) return
+        val now = System.currentTimeMillis()
+        if (now - lastTicketPollMs < TICKET_POLL_INTERVAL_MS) return
+        lastTicketPollMs = now
+        viewModelScope.launch {
+            try {
+                val armed = settingsDataStore.ticketReplyArmed.first()
+                if (!armed) return@launch
+                val seenAt = settingsDataStore.ticketReplySeenAt.first()
+                // Reply text the user last saw — compares with the fetched reply
+                // to word the alert (new reply vs. status-only change).
+                val seenReply = settingsDataStore.ticketReplySeenReply.first()
+                val url = "https://activation-codes-admin.iranmountainweather.ir/api/tickets/" + id
+                val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                val request = okhttp3.Request.Builder()
+                    .url(url)
+                    .get()
+                    .header("Accept", "application/json")
+                    .header("User-Agent", "IranMountainWeather-Android")
+                    .build()
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    client.newCall(request).execute().use { response ->
+                        val responseBody = response.body?.string()
+                        if (response.isSuccessful && !responseBody.isNullOrBlank()) {
+                            val res = moshi.adapter(TicketLookupResponse::class.java).fromJson(responseBody)
+                            if (res?.success == true) {
+                                val t = res.ticket
+                                val updatedAt = t?.updated_at
+                                if (!updatedAt.isNullOrBlank() && updatedAt > seenAt) {
+                                    // ISO-8601 UTC strings compare correctly
+                                    // lexicographically (same format/length).
+                                    // Word the alert by WHAT changed: a new
+                                    // reply vs. a status-only update.
+                                    val fetchedReply = t?.reply?.trim().orEmpty()
+                                    _ticketNewUpdate.value =
+                                        if (fetchedReply != seenReply.trim()) TicketUpdateAlert.NEW_REPLY
+                                        else TicketUpdateAlert.NEW_STATUS
+                                }
+                            }
+                        }
+                        // Non-2xx / 503 / parse errors are intentionally silent:
+                        // this is a background niceness, never an error surface.
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d("WeatherViewModel", "Silent ticket reply poll skipped: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Marks the current ticket state as SEEN by the user (they opened the
+     * follow-up dialog). Advances the watermark to [updatedAt], stores the
+     * reply text [reply], clears the alert, and disarms the watcher when
+     * [disarm] (reply seen, or ticket resolved) — see the call site.
+     */
+    fun markTicketReplySeen(updatedAt: String, reply: String?, disarm: Boolean) {
+        if (updatedAt.isBlank()) return
+        _ticketNewUpdate.value = TicketUpdateAlert.None
+        viewModelScope.launch {
+            settingsDataStore.markTicketReplySeen(updatedAt, reply, disarm)
         }
     }
 
@@ -1661,7 +1817,11 @@ sealed class TicketUiState {
 data class TicketResponse(
     val success: Boolean?,
     val ticket_id: String?,
-    val status: String?
+    val status: String?,
+    // Worker added created_at to the POST response (2026-10-04) so the app can
+    // seed the "unread reply" watermark; old deployed revisions omit it (null),
+    // and the app then falls back to its own device clock.
+    val created_at: String? = null
 )
 
 // Follow-up lookup: public GET /api/tickets/<id> returns a reduced public shape.
@@ -1689,4 +1849,13 @@ sealed class TicketLookupUiState {
     object Loading : TicketLookupUiState()
     data class Success(val ticket: TicketLookupData) : TicketLookupUiState()
     data class Error(val message: String) : TicketLookupUiState()
+}
+
+/** What the support agent changed since the user last looked (drives alert text). */
+enum class TicketUpdateAlert {
+    None,
+    /** A new/edited reply text was posted. */
+    NEW_REPLY,
+    /** Only the status changed (open / in_progress / resolved) — no new reply text. */
+    NEW_STATUS
 }
