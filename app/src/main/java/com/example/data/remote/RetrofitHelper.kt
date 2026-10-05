@@ -5,6 +5,7 @@ import com.example.BuildConfig
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
@@ -34,6 +35,9 @@ object RetrofitHelper {
         .build()
 
     private val okHttpClient = OkHttpClient.Builder()
+        // PIN HTTP/1.1: Cloudflare offers h2/h3, but several ISP middleboxes break
+        // h2-over-TCP; OkHttp has no QUIC fallback, so prefer HTTP/1.1 only.
+        .protocols(listOf(Protocol.HTTP_1_1))
         .addInterceptor { chain ->
             val originalRequest = chain.request()
             val newRequest = originalRequest.newBuilder()

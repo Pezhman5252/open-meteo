@@ -187,6 +187,7 @@ class WeatherViewModel(
                 Log.d("WeatherViewModel", "Fetching subscription plans dynamically from Cloudflare Worker: $plansUrl")
 
                 val client = okhttp3.OkHttpClient.Builder()
+                    .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
                     .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
@@ -1280,6 +1281,7 @@ class WeatherViewModel(
                 val body = jsonRequest.toRequestBody(mediaType)
 
                 val client = okhttp3.OkHttpClient.Builder()
+                    .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
                     .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
@@ -1403,6 +1405,7 @@ class WeatherViewModel(
                 val body = jsonRequest.toRequestBody(mediaType)
 
                 val client = okhttp3.OkHttpClient.Builder()
+                    .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
                     .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
@@ -1505,6 +1508,7 @@ class WeatherViewModel(
                 val url = "https://activation-codes-admin.iranmountainweather.ir/api/tickets/" + id
                 val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
                 val client = okhttp3.OkHttpClient.Builder()
+                    .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
                     .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
@@ -1590,6 +1594,7 @@ class WeatherViewModel(
                 val url = "https://activation-codes-admin.iranmountainweather.ir/api/tickets/" + id
                 val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
                 val client = okhttp3.OkHttpClient.Builder()
+                    .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
                     .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
@@ -1696,6 +1701,7 @@ class WeatherViewModel(
                 val body = jsonRequest.toRequestBody(mediaType)
 
                 val client = okhttp3.OkHttpClient.Builder()
+                    .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
                     .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .build()

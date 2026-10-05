@@ -9,6 +9,7 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.Json
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -135,7 +136,12 @@ class MountainRepository(private val mountainDao: MountainDao) {
 
     suspend fun syncWithRemote(url: String, currentVersion: Int): SyncResult = withContext(Dispatchers.IO) {
         try {
+            // PIN HTTP/1.1: Cloudflare advertises h2/h3, but several ISP middleboxes
+            // interfere with HTTP/2-over-TCP (h2 hangs, HTTP/1.1 is fine). OkHttp has
+            // no QUIC fallback, so let it negotiate only HTTP/1.1 for a reliable atlas
+            // sync. Verified: h2->timeout, http/1.1->200 on the affected network.
             val client = OkHttpClient.Builder()
+                .protocols(listOf(Protocol.HTTP_1_1))
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
                 .build()
